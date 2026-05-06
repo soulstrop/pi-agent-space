@@ -1,0 +1,124 @@
+\documentclass[journal]{IEEEtran}
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{tikz-cd}
+\usepackage{listings}
+\usepackage{hyperref}
+
+\begin{document}
+
+\title{Modeling Agent Customization and Optimization: A Category Theoretic Framework for Multi-Agent Workflows}
+
+\author{%
+  J.~Michael~Constans
+  and~Gemini~Pro~3.1.7%
+  \thanks{J. M. Constans is with Feature Software, LLC. E-mail:
+  \href{mailto:mikeco@constans.dev}{\texttt{mikeco@constans.dev}}.}%
+  \thanks{Gemini Pro 3.1 is a large language model developed by
+  Google (model identifier \texttt{gemini-3.1-pro-preview}). This paper was
+  prepared through interactive collaboration with that model:
+  the human author directed the scope, theorems, and exposition; the
+  model drafted prose, formalised statements, and produced the
+  \texttt{tikz-cd} diagrams under continuous human review.}%
+}
+
+\markboth{Preprint from Feature Software, LLC}%
+{Constans \MakeLowercase{\textit{et al.}}: Modeling Agent Customization and Optimization}
+
+\maketitle
+
+\begin{abstract}
+As large language model (LLM) agents become increasingly modular, the orchestration of their components---such as discrete skills, model providers, and external data servers---presents a complex optimization problem. In this paper, we introduce a category theoretic framework for constructing and optimizing complex agent workflows. We define a strict monoidal category where objects are typed data streams and morphisms represent parameterized agent capabilities. By implementing this framework in Haskell using Generalized Algebraic Data Types (GADTs), we provide compile-time guarantees of well-formedness for agent topologies. Furthermore, we formalize the search for optimal agent configurations as a Bayesian Optimization problem over this categorical space, employing Pareto optimization to balance resource constraints against solution quality.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Applied Category Theory, Large Language Models, Bayesian Optimization, Pareto Optimization, Monoidal Categories, Haskell.
+\end{IEEEkeywords}
+
+\section{Introduction}
+The proliferation of agentic frameworks has enabled the construction of complex systems where multiple language models and tools interact to solve graduated tasks. However, discovering the optimal combination of these components under finite resource constraints (e.g., token limits and API latency) remains an open challenge. 
+
+In this work, we cast the formulation of agent architectures into the language of Applied Category Theory. Drawing inspiration from Waites' plumbing calculus for agent coordination, we define a copy-discard category that enforces structural boundaries on data flows. We then layer a Sequential Decision-Making framework over this category to iteratively evaluate and optimize these structures using Bayesian Optimization (BO).
+
+\section{Categorical Semantics of Agent Workflows}
+
+To ensure structural integrity, we define a category \(\mathcal{C}\) where:
+\begin{itemize}
+    \item \textbf{Objects} (\(\text{Ob}(\mathcal{C})\)) are specific types of information states, such as \textsf{Prompt}, \textsf{Context}, \textsf{Code}, and \textsf{TestResult}.
+    \item \textbf{Morphisms} (\(\text{Hom}(A, B)\)) are computational processes mapping an input state to an output state.
+\end{itemize}
+
+In our Haskell implementation, this category is realized via the \texttt{AgentGraph a b} Generalized Algebraic Data Type (GADT).
+
+\subsection{Monoidal Structure and Routing}
+Agents rarely operate in a purely linear sequence. To support parallelism and scatter-gather patterns, \(\mathcal{C}\) is endowed with a strict monoidal structure, expressed via the tensor product \(\otimes\) (implemented as \texttt{Par} or \texttt{***} in Haskell).
+
+Furthermore, our category requires explicit structural routing morphisms, making it a copy-discard category:
+\begin{equation}
+\begin{tikzcd}
+A \arrow[r, "\Delta"] & A \otimes A \\
+A \arrow[r, "\lozenge"] & I
+\end{tikzcd}
+\end{equation}
+Here, \(\Delta\) (Copy) duplicates a stream, and \(\lozenge\) (Drop) discards it, terminating the flow.
+
+\subsection{Composition of Morphisms}
+A complex agent workflow is built by composing simpler morphisms. For instance, consider an agent that duplicates a user prompt, uses one copy to fetch external context via a Model Context Protocol (MCP) server, and passes both the prompt and the new context to a generative model.
+
+This topology is represented by the following commutative diagram:
+\begin{equation}
+\begin{tikzcd}
+& \textsf{Prompt} \arrow[dr, "\textsf{QueryMCP}"] & \\
+\textsf{Prompt} \arrow[ur, "\textsf{Id}"] \arrow[dr, "\textsf{Id}"'] & & \textsf{Context} \arrow[dl, "\textsf{CallModel}"] \\
+& \textsf{Prompt} \arrow[ul, "\textsf{Id}"'] & 
+\end{tikzcd}
+\end{equation}
+
+In the DSL, this exact structure is guaranteed by the compiler:
+\begin{lstlisting}[language=Haskell, basicstyle=\ttfamily\footnotesize]
+standardPiAgent :: AgentGraph Prompt TestResult
+standardPiAgent = 
+    Copy 
+    >>> (Id *** QueryMCP "github-pr-server")
+    >>> CallModel "claude-3-7-sonnet"
+    >>> ApplySkill "linter-skill"
+    >>> RunTests
+\end{lstlisting}
+
+\section{Optimization Over Categories}
+
+Once the structural space of valid agent graphs is defined, we address the challenge of finding the optimal graph configuration. We frame this as a combinatorial Bayesian Optimization problem.
+
+\subsection{Pareto Frontier Evaluation}
+Each execution of a specific \texttt{AgentGraph} yields a set of \texttt{Metrics}, mapping to a multidimensional objective space (e.g., Token Cost vs. Quality). Because we cannot exhaustively evaluate all valid graphs, we rely on Pareto optimization.
+
+Let \(\Phi \in \Sigma_{\mathcal{C}}(S)\) represent a specific agent wiring. A configuration \(\Phi_1\) Pareto-dominates \(\Phi_2\) if it performs strictly better on at least one metric without degrading any others. The optimization seeks the Pareto Frontier---the set of non-dominated morphisms.
+
+\subsection{Surrogate Modeling and Acquisition}
+In continuous Bayesian Optimization, a Gaussian Process (GP) is often used as a surrogate model. Because our search space consists of discrete categorical diagrams, we utilize a graph-based surrogate model to predict the performance of untested configurations.
+
+\begin{equation}
+\textsf{predictPerformance} : \textsf{History} \to \textsf{Hom}(A,B) \to \mathbb{E}[\textsf{Metrics}]
+\end{equation}
+
+The acquisition function systematically generates new morphisms (graphs) to test, explicitly balancing the exploration of novel agent topological structures against the exploitation of known, high-performing configurations.
+
+\section{Conclusion}
+By lifting agent orchestration into a strictly typed monoidal category, we decouple the structural validation of multi-agent systems from their execution. This abstraction provides a rigorous, mathematically sound foundation for deploying Sequential Decision-Making and Bayesian Optimization algorithms to autonomously design and refine the next generation of software engineering agents.
+
+\begin{thebibliography}{1}
+
+\bibitem{waites2026}
+W. Waites, ``A Typed Language for Agent Coordination,'' \emph{The n-Category Caf\'{e}}, Mar. 2026. [Online]. Available: \url{https://golem.ph.utexas.edu/category/2026/03/a_typed_language_for_agent_coordination.html}
+
+\bibitem{lam2017}
+R. R. Lam and K. E. Willcox, ``Lookahead Bayesian Optimization with Inequality Constraints,'' in \emph{Advances in Neural Information Processing Systems (NIPS)}, 2017.
+
+\bibitem{hanks2024}
+T. Hanks, B. She, E. Patterson, M. Hale, M. Klawonn, and J. Fairbanks, ``Modeling Model Predictive Control: A Category Theoretic Framework for Multistage Control Problems,'' 2024, arXiv:2305.03820v2.
+
+\bibitem{marcolli2022}
+M. Marcolli, ``Pareto Optimization in Categories,'' 2022, unpublished.
+
+\end{thebibliography}
+
+\end{document}

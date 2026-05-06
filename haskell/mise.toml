@@ -1,0 +1,14 @@
+[tools]
+hx = "0.6.0"
+
+[tasks."build"]
+description = "cabal build the Haskell project"
+run = "cabal build"
+
+[tasks."test"]
+description = "Run the Hspec test suite"
+run = "cabal test"
+
+[tasks."repl"]
+description = "Open a cabal REPL"
+run = "cabal repl"

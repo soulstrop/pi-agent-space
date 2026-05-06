@@ -1,0 +1,23 @@
+[tasks.test]
+description = "Run tests in all subprojects"
+depends = ["test-haskell", "test-python"]
+
+[tasks.test-haskell]
+dir = "haskell"
+run = "mise run test"
+
+[tasks.test-python]
+dir = "python"
+run = "mise run test"
+
+[tasks.build]
+description = "Build all subprojects"
+depends = ["build-haskell", "build-python"]
+
+[tasks.build-haskell]
+dir = "haskell"
+run = "mise run build"
+
+[tasks.build-python]
+dir = "python"
+run = "mise run build"

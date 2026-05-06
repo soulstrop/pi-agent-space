@@ -1,0 +1,11 @@
+[tools]
+python = "3.13"
+uv = "latest"
+
+[tasks.build]
+description = "Build python project"
+run = "uv build"
+
+[tasks.test]
+description = "Run python tests"
+run = "uv run pytest"

@@ -1,0 +1,21 @@
+cabal-version:      3.0
+name:               pi-agent-space
+version:            0.1.0.0
+build-type:         Simple
+
+library
+    exposed-modules:  AgentSpace
+    build-depends:    base >= 4.14 && < 5
+    hs-source-dirs:   src
+    default-language: Haskell2010
+
+test-suite pi-agent-space-test
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    other-modules:    AgentSpaceSpec
+    build-depends:    base >= 4.14 && < 5
+                    , hspec
+                    , pi-agent-space
+    build-tool-depends: hspec-discover:hspec-discover
+    hs-source-dirs:   test
+    default-language: Haskell2010
