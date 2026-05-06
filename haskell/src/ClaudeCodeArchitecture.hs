@@ -43,5 +43,5 @@ claudeCodeWorkflow =
 -- | The Claude Code "Dreaming" (Memory Consolidation) Loop
 -- Models the auto-compacting routine that handles token limits.
 -- We use ArrowLoop to feed the compacted context back into the next iteration.
-dreamingLoop :: AgentGraph Code Code
-dreamingLoop = loop (Par (ApplySkill "Process_Code_And_Dream") Id)
+dreamingLoop :: AgentGraph Code TestResult
+dreamingLoop = loop DreamSkill

@@ -65,6 +65,7 @@ data AgentGraph a b where
     CallParameterizedModel :: String -> AgentGraph (ModelParams, (Prompt, Context)) Code
     RunTests   :: AgentGraph Code TestResult
     MergeStrings :: AgentGraph (String, String) String
+    DreamSkill :: AgentGraph (Code, Context) (TestResult, Context)
 
 data ParaGraph p a b = Para (AgentGraph (p, a) b)
 
@@ -113,6 +114,7 @@ evaluateGraph (CallParameterizedModel model) (params, (prompt, context)) =
     return $ "Code from " ++ model ++ " at temp " ++ show (temperature params)
 evaluateGraph RunTests code = return Pass
 evaluateGraph MergeStrings (s1, s2) = return (s1 ++ "\n" ++ s2)
+evaluateGraph DreamSkill (code, _) = return (Pass, ["compacted memory for " ++ code])
 
 evaluatePara :: ParaGraph p a b -> p -> a -> IO b
 evaluatePara (Para g) p a = evaluateGraph g (p, a)
