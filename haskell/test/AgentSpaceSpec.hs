@@ -3,7 +3,7 @@ module AgentSpaceSpec (spec) where
 import Test.Hspec
 import AgentSpace
 import Control.Category ((>>>))
-import Control.Arrow ((***))
+import Control.Arrow ((***), (+++), loop)
 
 spec :: Spec
 spec = do
@@ -23,11 +23,20 @@ spec = do
       let graph = ApplySkill "uppercase" *** ApplySkill "uppercase"
       evaluateGraph graph ("hello", "world") `shouldReturn` ("HELLO", "WORLD")
 
+    it "supports ArrowChoice +++ operator for conditional routing" $ do
+      let graph = ApplySkill "uppercase" +++ ApplySkill "uppercase"
+      evaluateGraph graph (Left "hello") `shouldReturn` Left "HELLO"
+      evaluateGraph graph (Right "world") `shouldReturn` Right "WORLD"
+
     it "supports Copy for duplicating streams" $ do
       evaluateGraph Copy "hello" `shouldReturn` ("hello", "hello")
 
     it "supports Drop for discarding streams" $ do
       evaluateGraph Drop "hello" `shouldReturn` ()
+
+    it "supports ArrowLoop for feedback traces" $ do
+      let graph = loop (Par Id Id) -- A trivial loop that passes data through
+      evaluateGraph graph "loop_test" `shouldReturn` "loop_test"
 
     it "evaluates standardPiAgent end-to-end" $ do
       let standardPiAgent = 
@@ -38,6 +47,11 @@ spec = do
             >>> RunTests
       
       evaluateGraph standardPiAgent "Implement binary search" `shouldReturn` Pass
+
+    it "supports parameterized morphisms (ParaGraph)" $ do
+      let params = ModelParams { temperature = 0.7 }
+          paraGraph = Para (CallParameterizedModel "claude-3-7-sonnet")
+      evaluatePara paraGraph params ("test_prompt", ["ctx"]) `shouldReturn` "Code from claude-3-7-sonnet at temp 0.7"
 
   describe "Pareto Optimization" $ do
     it "finds the non-dominated configurations" $ do

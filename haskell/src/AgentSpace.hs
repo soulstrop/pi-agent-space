@@ -5,6 +5,7 @@ module AgentSpace where
 import Prelude hiding (id, (.))
 import Control.Category
 import Control.Arrow
+import Control.Monad.Fix (mfix)
 import Data.Char (toUpper)
 
 type Prompt  = String
@@ -15,6 +16,10 @@ data TestResult = Pass | Fail String deriving (Show, Eq)
 data Metrics = Metrics 
     { tokensConsumed :: Int
     , qualityScore   :: Float
+    } deriving (Show, Eq)
+
+data ModelParams = ModelParams 
+    { temperature :: Float 
     } deriving (Show, Eq)
 
 data Trial a b = Trial 
@@ -52,10 +57,15 @@ data AgentGraph a b where
     Par        :: AgentGraph a b -> AgentGraph c d -> AgentGraph (a, c) (b, d)
     Copy       :: AgentGraph a (a, a)
     Drop       :: AgentGraph a ()
+    Choice     :: AgentGraph a b -> AgentGraph c d -> AgentGraph (Either a c) (Either b d)
+    Loop       :: AgentGraph (b, d) (c, d) -> AgentGraph b c
     ApplySkill :: String -> AgentGraph String String
     QueryMCP   :: String -> AgentGraph Prompt Context
     CallModel  :: String -> AgentGraph (Prompt, Context) Code
+    CallParameterizedModel :: String -> AgentGraph (ModelParams, (Prompt, Context)) Code
     RunTests   :: AgentGraph Code TestResult
+
+data ParaGraph p a b = Para (AgentGraph (p, a) b)
 
 instance Category AgentGraph where
     id = Id
@@ -65,6 +75,14 @@ instance Arrow AgentGraph where
     arr _ = error "Pure functions omitted for diagrammatic purity"
     first f = Par f Id
     (***) = Par
+
+instance ArrowChoice AgentGraph where
+    left f = Choice f Id
+    right f = Choice Id f
+    (+++) = Choice
+
+instance ArrowLoop AgentGraph where
+    loop = Loop
 
 evaluateGraph :: AgentGraph a b -> a -> IO b
 evaluateGraph Id x = return x
@@ -77,8 +95,22 @@ evaluateGraph (Par f g) (x, y) = do
     return (resX, resY)
 evaluateGraph Copy x = return (x, x)
 evaluateGraph Drop _ = return ()
+evaluateGraph (Choice f _) (Left x) = do
+    res <- evaluateGraph f x
+    return (Left res)
+evaluateGraph (Choice _ g) (Right y) = do
+    res <- evaluateGraph g y
+    return (Right res)
+evaluateGraph (Loop f) b = do
+    (c, _) <- mfix (\ ~(_, d) -> evaluateGraph f (b, d))
+    return c
 evaluateGraph (ApplySkill "uppercase") x = return (map toUpper x)
 evaluateGraph (ApplySkill name) x = return x
 evaluateGraph (QueryMCP server) prompt = return ["Context from " ++ server ++ " for: " ++ prompt]
 evaluateGraph (CallModel model) (prompt, context) = return $ "Code from " ++ model
+evaluateGraph (CallParameterizedModel model) (params, (prompt, context)) = 
+    return $ "Code from " ++ model ++ " at temp " ++ show (temperature params)
 evaluateGraph RunTests code = return Pass
+
+evaluatePara :: ParaGraph p a b -> p -> a -> IO b
+evaluatePara (Para g) p a = evaluateGraph g (p, a)
