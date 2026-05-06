@@ -101,6 +101,20 @@ f : P \otimes A \to B
 \end{equation}
 In our framework, this allows the Bayesian Optimizer to iteratively tune the parameter space $P$ without altering the underlying topological validity of the graph from $A \to B$.
 
+\section{Case Studies in Complex Agent Modeling}
+
+To demonstrate the expressiveness of the $\mathcal{C}$ category and its Haskell implementation, we mapped two real-world, complex agentic architectures to our framework.
+
+\subsection{Claude Code: Orchestration and Dreaming}
+The March 2026 Anthropic Claude Code leak revealed a complex "lead-agent-plus-subagents" pattern, where a primary coordinator spawns isolated sub-agents in parallel. In our DSL, this is natively modeled using the monoidal tensor product $\otimes$ alongside $\Delta$ (Copy) to duplicate the context safely.
+
+Furthermore, the leak highlighted a "Dreaming" routine for memory consolidation, which periodically compacts older conversation context. Because this involves taking a modified context and feeding it back into the agent loop, it cannot be modeled by a simple DAG. We use the trace operator (\texttt{ArrowLoop}) to mathematically model this cyclic dependency without deadlock.
+
+\subsection{OpenClaw: Embedded Runtimes and Event Taps}
+OpenClaw is an open-source workflow implemented directly on top of the Pi agent harness. Instead of executing the agent as an isolated subprocess, OpenClaw imports the agent session natively to inject custom tool pipelines and subscribe to real-time events for block chunking.
+
+Our framework models this embedded paradigm elegantly. The custom policy filtering is modeled as a sequence of context-modifying skills. More importantly, the event subscription is modeled mathematically as a parallel process tapping the execution stream. We use $\Delta$ to copy the data stream, run the agent loop on the primary branch, and run the event subscriber on the secondary branch. The subscriber's output is then explicitly discarded via $\lozenge$ (Drop), ensuring the stream's structural integrity is maintained.
+
 \section{Optimization Over Categories}
 
 Once the structural space of valid agent graphs is defined, we address the challenge of finding the optimal graph configuration. We frame this as a combinatorial Bayesian Optimization problem.
