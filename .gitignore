@@ -1,0 +1,15 @@
+# Haskell
+dist-newstyle/
+.ghc.environment.*
+
+# Python
+__pycache__/
+.pytest_cache/
+.venv/
+
+# LaTeX
+*.aux
+*.log
+*.out
+*.fls
+*.fdb_latexmk
