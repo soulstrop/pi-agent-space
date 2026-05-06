@@ -60,12 +60,15 @@ data AgentGraph a b where
     Choice     :: AgentGraph a b -> AgentGraph c d -> AgentGraph (Either a c) (Either b d)
     Loop       :: AgentGraph (b, d) (c, d) -> AgentGraph b c
     ApplySkill :: String -> AgentGraph String String
+    ApplyContextSkill :: String -> AgentGraph Context Context
+    ExtractCode :: AgentGraph (Code, ()) Code
     QueryMCP   :: String -> AgentGraph Prompt Context
     CallModel  :: String -> AgentGraph (Prompt, Context) Code
     CallParameterizedModel :: String -> AgentGraph (ModelParams, (Prompt, Context)) Code
     RunTests   :: AgentGraph Code TestResult
     MergeStrings :: AgentGraph (String, String) String
     DreamSkill :: AgentGraph (Code, Context) (TestResult, Context)
+    SubscribeStream :: AgentGraph (Prompt, Context) ()
 
 data ParaGraph p a b = Para (AgentGraph (p, a) b)
 
@@ -108,6 +111,8 @@ evaluateGraph (Loop f) b = do
     return c
 evaluateGraph (ApplySkill "uppercase") x = return (map toUpper x)
 evaluateGraph (ApplySkill name) x = return x
+evaluateGraph (ApplyContextSkill name) ctx = return (name : ctx)
+evaluateGraph ExtractCode (code, _) = return code
 evaluateGraph (QueryMCP server) prompt = return ["Context from " ++ server ++ " for: " ++ prompt]
 evaluateGraph (CallModel model) (prompt, context) = return $ "Code from " ++ model
 evaluateGraph (CallParameterizedModel model) (params, (prompt, context)) = 
@@ -115,6 +120,7 @@ evaluateGraph (CallParameterizedModel model) (params, (prompt, context)) =
 evaluateGraph RunTests code = return Pass
 evaluateGraph MergeStrings (s1, s2) = return (s1 ++ "\n" ++ s2)
 evaluateGraph DreamSkill (code, _) = return (Pass, ["compacted memory for " ++ code])
+evaluateGraph SubscribeStream _ = return ()
 
 evaluatePara :: ParaGraph p a b -> p -> a -> IO b
 evaluatePara (Para g) p a = evaluateGraph g (p, a)
