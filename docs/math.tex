@@ -84,6 +84,23 @@ standardPiAgent =
     >>> RunTests
 \end{lstlisting}
 
+\subsection{Advanced Control: Choices, Loops, and Parameterization}
+While directed acyclic topologies cover basic use cases, robust autonomous agents require discrete routing decisions and feedback loops (e.g., self-correction). We extend $\mathcal{C}$ with \textit{Coproducts} (sum types) to model discrete conditional branching (\texttt{ArrowChoice}), and \textit{Traces} to model feedback loops (\texttt{ArrowLoop}). 
+
+A feedback loop where a component $D$ is fed back to the input is modeled categorically via a trace operator:
+\begin{equation}
+\begin{tikzcd}
+B \arrow[r, "\textsf{loop}"] & C \\
+B \otimes D \arrow[u, "\textsf{id}_B \otimes \textsf{trace}"] \arrow[r, "f"] & C \otimes D \arrow[u, "\textsf{id}_C \otimes \textsf{trace}"']
+\end{tikzcd}
+\end{equation}
+
+Furthermore, to optimize an agent, we must separate the \textit{hyperparameter space} (e.g., model temperature) from the \textit{data flow} (the prompt). Following Hanks et al. \cite{hanks2024}, we construct the parameterized category $\textsf{Para}(\mathcal{C})$. A parameterized morphism is one where the computational process is contingent on an external parameter configuration $P$:
+\begin{equation}
+f : P \otimes A \to B
+\end{equation}
+In our framework, this allows the Bayesian Optimizer to iteratively tune the parameter space $P$ without altering the underlying topological validity of the graph from $A \to B$.
+
 \section{Optimization Over Categories}
 
 Once the structural space of valid agent graphs is defined, we address the challenge of finding the optimal graph configuration. We frame this as a combinatorial Bayesian Optimization problem.
