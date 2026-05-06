@@ -1,0 +1,15 @@
+{
+  "id": "001_binary_search",
+  "title": "Implement Binary Search",
+  "difficulty": 1,
+  "prompt": "Implement a binary search algorithm in `search.py`. The function should be named `binary_search` and take a sorted list of integers and a target integer. It should return the index of the target if found, or -1 if not found. Do not modify `test_search.py`.",
+  "workspace_dir": "graduated_problems/001_binary_search",
+  "validation_steps": [
+    {
+      "name": "Run pytest",
+      "command": "pytest test_search.py",
+      "expected_exit_code": 0
+    }
+  ],
+  "tags": ["algorithms", "python", "search"]
+}
