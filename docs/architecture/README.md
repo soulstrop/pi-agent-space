@@ -30,8 +30,8 @@ The leak highlighted a "Dreaming" routine that auto-compacts older conversations
 ```haskell
 -- | The Claude Code "Dreaming" (Memory Consolidation) Loop
 -- We use ArrowLoop to trace the compacted context back into the next iteration.
-dreamingLoop :: AgentGraph Code Code
-dreamingLoop = loop (Par (ApplySkill "Process_Code_And_Dream") Id)
+dreamingLoop :: AgentGraph Code TestResult
+dreamingLoop = loop DreamSkill
 ```
 
 ### 3. The Full Orchestration Pipeline (KAIROS, Undercover, etc.)
@@ -52,3 +52,50 @@ claudeCodeWorkflow =
 ```
 
 Because of the strict typing of the `AgentGraph` GADT, the Haskell compiler mathematically proves that the topological connections between sub-components are well-formed (e.g., the output of the KAIROS daemon matches the required input for Undercover Mode, which flows correctly into validation). This guarantees the lack of deadlocks or type-mismatches across distributed agent graphs before deployment.
+
+## Modeling Embedded Architectures: The OpenClaw Example
+
+OpenClaw implements a messaging gateway architecture by directly importing and instantiating Pi's `AgentSession` rather than spawning it as a subprocess. This embedded approach requires custom tool injection, dynamic system prompt construction based on context, and parallel event subscription to stream intermediate results (block chunking).
+
+Our Haskell categorical DSL easily accommodates this embedded paradigm:
+
+### 1. The Tool Policy Pipeline
+Instead of relying on Pi's default tools, OpenClaw constructs a custom pipeline that applies strict policies, normalizes schemas to handle specific provider quirks, and enforces sandbox path constraints. We model this sequence of context-modifying operations using `ApplyContextSkill`:
+
+```haskell
+toolPipeline :: AgentGraph Context Context
+toolPipeline = 
+    ApplyContextSkill "Filter_Tools_By_Policy"
+    >>> ApplyContextSkill "Normalize_Tool_Schemas"
+    >>> ApplyContextSkill "Enforce_Sandbox_Paths"
+```
+
+### 2. Event Subscription and Streaming
+OpenClaw taps into the active agent loop to subscribe to events (e.g., `message_start`, `tool_execution`) for terminal UI updates and block chunking. In Applied Category Theory, tapping a data stream without interrupting its primary flow is represented using the `Copy` morphism and a parallel tensor product (`***`), followed by `ExtractCode` to discard the tapped stream's termination type:
+
+```haskell
+agentExecutionWithStreaming :: AgentGraph (Prompt, Context) Code
+agentExecutionWithStreaming = 
+    Copy
+    >>> ( CallModel "OpenClaw-Embedded-Session" 
+          *** 
+          SubscribeStream
+        )
+    >>> ExtractCode
+```
+
+### 3. The OpenClaw Workflow
+The full initialization and execution cycle seamlessly weaves these components together. First, the authentication profile is resolved, then the custom tool pipeline is applied, and finally, the session executes under event observation:
+
+```haskell
+openClawWorkflow :: AgentGraph (Prompt, Context) TestResult
+openClawWorkflow = 
+    -- 1. Setup Auth and Model Resolution
+    (Id *** ApplyContextSkill "Resolve_Auth_Profile")
+    -- 2. Run the Tool Pipeline to prepare the injected tools
+    >>> (Id *** toolPipeline)
+    -- 3. Execute the embedded session with event subscription
+    >>> agentExecutionWithStreaming
+    -- 4. Validate the result
+    >>> RunTests
+```
