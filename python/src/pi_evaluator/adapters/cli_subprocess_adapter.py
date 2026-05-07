@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
-from ..domain.test_suite import GraduatedProblem
-from ..domain.types import Package, RawTelemetry
+from ..domain.test_suite import GraduatedProblem, ValidationStep
+from ..domain.types import Package, RawTelemetry, ValidationResult
 from ..ports.agent_harness_port import AgentHarnessPort
 from .workspace import materialize_workspace
 
@@ -51,10 +52,33 @@ class CliSubprocessAdapter(AgentHarnessPort):
             text=True,
             check=False,
         )
+        validation_results = [
+            _run_validation_step(step, materialized)
+            for step in problem.validation_steps
+        ]
         return RawTelemetry(
             events=_parse_event_stream(proc.stdout),
             exit_code=proc.returncode,
+            validation_results=validation_results,
         )
+
+
+def _run_validation_step(step: ValidationStep, workspace: Path) -> ValidationResult:
+    proc = subprocess.run(
+        step.command,
+        cwd=str(workspace),
+        capture_output=True,
+        text=True,
+        shell=True,
+        check=False,
+    )
+    return ValidationResult(
+        step_name=step.name,
+        exit_code=proc.returncode,
+        stdout=proc.stdout,
+        stderr=proc.stderr,
+        passed=proc.returncode == step.expected_exit_code,
+    )
 
 
 def _parse_event_stream(stdout: str) -> list[dict]:

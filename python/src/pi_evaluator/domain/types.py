@@ -25,15 +25,30 @@ class Package:
 
 
 @dataclass(frozen=True)
+class ValidationResult:
+    """Outcome of one ValidationStep run inside a materialized workspace."""
+
+    step_name: str
+    exit_code: int
+    stdout: str
+    stderr: str
+    passed: bool
+
+
+@dataclass(frozen=True)
 class RawTelemetry:
     """Raw output from an agent run, before scoring.
 
-    Phase 1 minimal shape: agent event stream + exit code. Phase 2
-    expands this with validation results and possibly artifacts.
+    Phase 2 shape: agent event stream + exit code + the per-step
+    validation outcomes captured by the harness adapter after the
+    agent finishes. ``validation_results`` defaults to an empty list
+    so Phase 1 stubs and tests continue to work without explicit
+    validation.
     """
 
     events: list[dict]
     exit_code: int
+    validation_results: list[ValidationResult] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
