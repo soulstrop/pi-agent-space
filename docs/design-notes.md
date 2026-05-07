@@ -71,3 +71,59 @@ The package's `skills` represents an ordered pipeline rather than a set: by conv
 Latent concerns that would force revision: (a) if a future ADR ever decides skills should be unordered (a set), the canonicalization changes and any cached hashes become invalid, which would mean a one-time recomputation pass over `trials/`; (b) if international template values ever introduce non-ASCII text, NFC normalization may need to enter the canonical form ahead of `json.dumps`.
 
 **Related:** `python/tests/test_identity.py`; memory `project_inference_vs_computation.md` (substitution principle).
+
+---
+
+### Pi invocation: canonical command shape
+
+**Where:** `python/src/pi_evaluator/adapters/cli_subprocess_adapter.py`.
+
+**Decision:** The Phase 2 adapter invokes Pi as `pi --print --no-session --mode json --model <provider/id> [--system-prompt <text>] [--tools <csv>] "<prompt>"` and parses the JSON event stream off stdout. `--print` is non-interactive (one-shot prompt + exit); `--no-session` means ephemeral (no session jsonl persisted); `--mode json` produces line-delimited events.
+
+This shape is the result of reading Pi's `docs/json.md` and `docs/usage.md` once and committing to a stable invocation: every trial across every phase uses the same flag set. The optional flags (`--system-prompt`, `--tools`) are omitted when the corresponding Package field is empty so Pi falls back to its defaults rather than receiving empty strings.
+
+Reconsider triggers: (a) if we want a Pi session jsonl per trial as a debug trail, drop `--no-session` and add `--session-dir <trial_workspace>/.pi-session` so sessions stay per-trial-isolated; (b) if streaming feedback into the trial as it happens becomes useful (rather than parsing after exit), switch from `subprocess.run` to a streaming reader.
+
+**Related:** `python/tests/test_cli_subprocess_adapter.py`; Pi local docs at `~/.local/share/mise/installs/pi/<version>/docs/json.md`.
+
+---
+
+### Provider/model as a unified `provider/id` string
+
+**Where:** `python/src/pi_evaluator/domain/types.py` (`Package.model`); `python/src/pi_evaluator/adapters/cli_subprocess_adapter.py`.
+
+**Decision:** `Package.model` is a single string of the form `"<provider>/<id>"` (e.g., `"google/gemini-2.5-flash"`, `"anthropic/claude-haiku-4-5"`), passed verbatim to Pi's `--model` flag. We did **not** split the field into `model_provider` + `model_id`.
+
+Pi's CLI accepts both forms (`--provider X --model Y` or `--model X/Y`); choosing the unified string keeps the Package surface area smaller, makes the candidate-identity hash trivially stable across provider rearrangements, and lets the slot-space schema enumerate `(provider, model)` tuples as opaque strings rather than coupled fields. Future featurization (Phase 6.1) will likely split the string back into provider and id features for the surrogate, but the storage form stays unified.
+
+Reconsider triggers: (a) provider-specific config (deployment regions, API base URLs) needs to ride alongside the model selection; (b) the optimizer wants to vary provider and id semi-independently and the slot schema bumps into the unified-string form.
+
+**Related:** `python/src/pi_evaluator/domain/types.py:Package`.
+
+---
+
+### Validation always runs, even when Pi exits non-zero
+
+**Where:** `python/src/pi_evaluator/adapters/cli_subprocess_adapter.py`.
+
+**Decision:** After Pi exits, the adapter runs every `ValidationStep.command` against the materialized workspace regardless of Pi's exit code. The exit code is preserved in `RawTelemetry.exit_code` for downstream signals; validation results are independent.
+
+The workspace state IS the experimental result. Pi might exit non-zero for many reasons — API rate limits, malformed events, an explicit error from the model — that don't preclude the workspace having been productively modified. Conversely Pi might exit zero having done nothing useful. Decoupling validation from Pi's exit code lets the scorer treat both signals as independent observations: tokens-consumed says how expensive the run was; validation-pass-rate says whether the workspace ended in a passing state; exit code says whether the harness itself succeeded.
+
+This also matters for adversarial / chaotic test cases where we deliberately want to score "what state did the workspace end in" without conflating it with "did Pi crash."
+
+**Related:** `python/tests/test_validation.py::test_validation_runs_even_when_pi_fails`.
+
+---
+
+### Skills are Pi tool names verbatim
+
+**Where:** `python/src/pi_evaluator/adapters/cli_subprocess_adapter.py`; `python/src/pi_evaluator/domain/types.py` (`Package.skills`).
+
+**Decision:** `Package.skills` is a `list[str]` whose entries are passed comma-joined into Pi's `--tools` flag without translation, mapping, or namespacing. Valid values are Pi's built-in tool names (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) plus any extension-installed tool names registered via `pi install`.
+
+The Phase 1 plan referred to skills generically (`["lint", "format"]`), which made sense before the Pi binding. Phase 2 forces the term: a "skill" in our package model is exactly an entry in Pi's `--tools` set. The Phase 3.1 slot schema must therefore enumerate valid Pi tool names per the running Pi installation, and reject invalid names at schema-load time so a proposed package can actually run.
+
+A future broader notion of "skill" — e.g., a higher-level capability composed of multiple Pi tools and a snippet of system prompt — would need a different field name (`capabilities`?) or a translation layer. Today the term and the data are unified.
+
+**Related:** Pi local docs at `~/.local/share/mise/installs/pi/<version>/index.md`; Phase 3.1 in `docs/implementation-plan.md`.
