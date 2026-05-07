@@ -27,6 +27,10 @@ run = "uv run ty check"
 description = "Run Python tests"
 run = "uv run pytest"
 
+[tasks.test-acceptance]
+description = "Run real-Pi acceptance tests (requires API keys, costs tokens)"
+run = "uv run pytest -m acceptance"
+
 [tasks.build]
 description = "Build Python project"
 run = "uv build"
