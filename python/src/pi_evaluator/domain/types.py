@@ -7,7 +7,6 @@ accrue across phases.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -98,5 +97,5 @@ class Trial:
     eval_suite_ref: EvalSuiteRef
     version_vector: VersionVector
     events: list[TrialEvent] = field(default_factory=list)
-    final_metrics: Optional[Metrics] = None
-    subjective_score: Optional[SubjectiveScore] = None
+    final_metrics: Metrics | None = None
+    subjective_score: SubjectiveScore | None = None

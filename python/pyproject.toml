@@ -22,3 +22,8 @@ packages = ["src/pi_evaluator"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+
+[tool.ruff.lint]
+# Defaults (E, F, W) plus pyupgrade (UP) for modernizations such as
+# UP007 (Optional[X] → X | None) and isort (I) for import sorting.
+select = ["E", "F", "W", "UP", "I"]

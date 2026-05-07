@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .domain.types import (
     EvalSuiteRef,
@@ -20,7 +20,7 @@ from .ports.scoring_port import ScoringPort
 
 
 def _default_clock() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class TrialRunner:

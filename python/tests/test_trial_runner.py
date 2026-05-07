@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import itertools
 import json
-from typing import Optional
 
 import pytest
 
@@ -72,10 +71,10 @@ def _counter_clock(prefix: str = "t"):
 def _runner(
     tmp_path,
     *,
-    metrics: Optional[Metrics] = None,
-    subjective: Optional[SubjectiveScore] = None,
-    telemetry: Optional[RawTelemetry] = None,
-    problems: Optional[list[GraduatedProblem]] = None,
+    metrics: Metrics | None = None,
+    subjective: SubjectiveScore | None = None,
+    telemetry: RawTelemetry | None = None,
+    problems: list[GraduatedProblem] | None = None,
 ) -> tuple[TrialRunner, PerTrialDirectoryAdapter]:
     persistence = PerTrialDirectoryAdapter(tmp_path)
     runner = TrialRunner(

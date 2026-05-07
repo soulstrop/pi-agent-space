@@ -13,8 +13,11 @@ description = "Lint Python sources with ruff"
 run = "uv run ruff check ."
 
 [tasks.format]
-description = "Format Python sources with ruff"
-run = "uv run ruff format ."
+description = "Format Python sources with ruff (applies lint auto-fixes too)"
+run = [
+    "uv run ruff check --fix .",
+    "uv run ruff format .",
+]
 
 [tasks.typecheck]
 description = "Type-check Python sources with ty"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from ..domain.types import Metrics, RawTelemetry, SubjectiveScore, Trial
 
@@ -18,4 +18,4 @@ class ScoringPort(Protocol):
 
     def score_objective(self, telemetry: RawTelemetry) -> Metrics: ...
 
-    def score_subjective(self, trial: Trial) -> Optional[SubjectiveScore]: ...
+    def score_subjective(self, trial: Trial) -> SubjectiveScore | None: ...
