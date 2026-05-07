@@ -9,16 +9,26 @@
 \title{Modeling Agent Customization and Optimization: A Category Theoretic Framework for Multi-Agent Workflows}
 
 \author{%
-  J.~Michael~Constans
-  and~Gemini~Pro~3.1.7%
+  J.~Michael~Constans,
+  Gemini~Pro~3.1.7,
+  and~Claude~Opus~4.7%
   \thanks{J. M. Constans is with Feature Software, LLC. E-mail:
   \href{mailto:mikeco@constans.dev}{\texttt{mikeco@constans.dev}}.}%
   \thanks{Gemini Pro 3.1 is a large language model developed by
-  Google (model identifier \texttt{gemini-3.1-pro-preview}). This paper was
-  prepared through interactive collaboration with that model:
-  the human author directed the scope, theorems, and exposition; the
-  model drafted prose, formalised statements, and produced the
-  \texttt{tikz-cd} diagrams under continuous human review.}%
+  Google (model identifier \texttt{gemini-3.1-pro-preview}). The main
+  body of this paper was prepared through interactive collaboration
+  with that model: the human author directed the scope, theorems,
+  and exposition; the model drafted prose, formalised statements, and
+  produced the \texttt{tikz-cd} diagrams under continuous human
+  review.}%
+  \thanks{Claude Opus 4.7 is a large language model developed by
+  Anthropic (model identifier \texttt{claude-opus-4-7}). The appendix
+  on user-harness feedback as a lens was prepared through interactive
+  collaboration with that model: the human author directed the scope
+  and the canonical mapping; the model identified the parametric-lens
+  correspondence in the categorical cybernetics literature, drafted
+  the prose, and formalised the typed-substitution claim under
+  continuous human review.}%
 }
 
 \markboth{Preprint from Feature Software, LLC}%
@@ -136,6 +146,36 @@ The acquisition function systematically generates new morphisms (graphs) to test
 \section{Conclusion}
 By lifting agent orchestration into a strictly typed monoidal category, we decouple the structural validation of multi-agent systems from their execution. This abstraction provides a rigorous, mathematically sound foundation for deploying Sequential Decision-Making and Bayesian Optimization algorithms to autonomously design and refine the next generation of software engineering agents.
 
+\appendices
+
+\section{User-Harness Feedback as a Lens}
+\label{appendix:lens}
+
+The Para($\mathcal{C}$) construction of Section II-C separates the parameter space $P$ from the underlying data flow $A \to B$, but it remains silent on \emph{how} parameters are determined or refined during a trial. In the practitioner literature on coding-agent harnesses, Bockeler partitions the user-facing wrapper around a coding agent --- the \textit{user harness} --- into two regulation mechanisms~\cite{bockeler2026}: \textit{guides} (feedforward; applied before the agent acts: project conventions, system prompts, bootstrap scripts, CodeMod tools) and \textit{sensors} (feedback; applied after the agent acts: pre-commit hooks, test suites, static analyzers, AI code review). We observe that the guide/sensor pair has the structure of a \textit{parametric lens} in the sense of categorical cybernetics~\cite{capucci2021}.
+
+A lens $\binom{S}{T} \to \binom{A}{B}$ consists of a forward view $v : S \to A$ and a backward update $u : S \otimes B \to T$. Mapping this to the user harness around a parameterized agent morphism $f : P \otimes A \to B$:
+\begin{itemize}
+    \item A \textbf{guide} is the forward leg: from the harness state (problem statement, project conventions, prior trial history) it derives the parameter configuration and any context shaping the agent's input before $f$ runs.
+    \item A \textbf{sensor} is the backward leg: from the agent's output $B$ and the surrounding state, it produces a signal that closes the loop --- either to the agent itself (self-correction, inner loop) or to the optimizer (Bayesian update on $P$, outer loop).
+\end{itemize}
+
+This perspective recasts a user-harness configuration as a stack of parametric lenses composed over the agent's parameterized morphism, rather than a flat collection of items. The optimization of Section IV thus operates implicitly over \emph{lensed morphisms}: parameterized agent graphs equipped with a guide/sensor envelope.
+
+\subsection{Typed Items and the Substitution Principle}
+
+Each user-harness item additionally carries a type classification~\cite{bockeler2026}: \textit{computational} (deterministic, fast, low-variance: linters, type checkers, structural analyzers) or \textit{inferential} (semantic, slow, higher-variance: LLM-as-judge, semantic code review). The $2 \times 2$ of (role, type) $\in$ \{guide, sensor\} $\times$ \{computational, inferential\} gives each item a position in a typed catalog.
+
+Given the lens framing, the following claim is structural rather than empirical: \emph{a substitution that replaces an inferential item with a computational item of the same lens shape --- same forward and backward types --- is strictly Pareto-dominant} on cost, latency, and variance, with the loop's compositional structure preserved. The Bayesian optimizer of Section IV-B can therefore exploit a catalog of known-equivalent type-preserving substitutions ahead of any random or surrogate-driven move; these substitutions need not be rediscovered statistically.
+
+\subsection{Partial and Asynchronous Feedback}
+
+The strict lens shape assumes the backward leg always returns. Two features of real harnesses violate this:
+\begin{itemize}
+    \item \textbf{Subjective sensors} (human or LLM-judge ratings) arrive asynchronously or not at all relative to the trial closing.
+    \item \textbf{Telemetry-based sensors} emit zero, one, or many events per trial.
+\end{itemize}
+The accurate optic is therefore not a strict lens but an \emph{affine traversal} over the sensor channel, capturing zero-or-more feedback semantics. The lens is the right first approximation for the optimization formulation; refinement to the traversal case is a target for future work.
+
 \begin{thebibliography}{1}
 
 \bibitem{waites2026}
@@ -149,6 +189,12 @@ T. Hanks, B. She, E. Patterson, M. Hale, M. Klawonn, and J. Fairbanks, ``Modelin
 
 \bibitem{marcolli2022}
 M. Marcolli, ``Pareto Optimization in Categories,'' 2022, unpublished.
+
+\bibitem{bockeler2026}
+B. Bockeler, ``Harness Engineering for Coding Agents,'' \emph{martinfowler.com}, 2026. [Online]. Available: \url{https://martinfowler.com/articles/harness-engineering.html}
+
+\bibitem{capucci2021}
+M. Capucci, B. Gavranovi\'{c}, J. Hedges, and E. F. Rischel, ``Towards Foundations of Categorical Cybernetics,'' 2021, arXiv:2105.06332.
 
 \end{thebibliography}
 
