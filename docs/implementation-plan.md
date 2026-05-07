@@ -34,7 +34,14 @@ The production code is organized as ports and adapters per ADR 0002. Five ports:
 
 The orchestrator is `TrialRunner`, which composes these ports to execute one trial.
 
-**Note on existing scaffolding.** `python/src/pi_evaluator/` already contains a stub `AgentHarnessPort` that returns `Metrics` directly, conflating execution and scoring. Phase 1 Step 1.5 refactors this so `AgentHarnessPort.run` returns raw telemetry and `ScoringPort` derives metrics — preserving the existing module structure but cleaning the interface.
+**Note on existing scaffolding.** `python/src/pi_evaluator/` originally contained a stub `AgentHarnessPort` that returned `Metrics` directly, conflating execution and scoring. Phase 1 Step 1.5 refactored this so `AgentHarnessPort.run` returns raw telemetry and `ScoringPort` derives metrics — preserving the existing module structure but cleaning the interface.
+
+**Phase 1 outcomes feeding later phases.**
+
+- `TrialRunner` lives at `pi_evaluator/trial_runner.py` (no `application/` layer yet) and threads `problem.workspace_dir` to `AgentHarnessPort.run` verbatim. Phase 2.1's tmpdir copy lives inside the adapter — the runner's contract is unchanged.
+- Aggregation across problems (`sum(tokens)`, `mean(rates)`, `mean(quality)`) lives in a private `_aggregate` helper inside `TrialRunner`. Phase 4's capability profile either lifts this to a `MetricAggregatorPort` or replaces it inline; the existence of this helper is the starting point.
+- `PersistencePort.finalize_trial(trial_id, final_metrics, subjective_score=None)` is one-shot at trial close. Phase 5's async-subjective path needs an additional method (or explicit re-finalize semantics) so that subjective scores can land after the trial closes without re-running objective scoring.
+- Float precision bites trivially-symmetric aggregates (e.g., `mean([0.8, 0.8, 0.8]) == 0.8000000000000002`). Tests across Phases 4–6 must use `pytest.approx` for any aggregated rate/quality metric.
 
 ---
 
@@ -81,13 +88,13 @@ Steps 1.1 and 1.2 can begin in parallel. After 1.1, steps 1.3, 1.4, 1.5, 1.6 are
 
 **Steps.**
 
-- **2.1 Workspace materialization helper.** *Independent.* Copy `GraduatedProblem.workspace_dir` into a temp directory the trial can mutate; return the temp path. v1 isolation strategy: tmpdir copy. (Workspace isolation gets a future ADR; this is the placeholder.)
+- **2.1 Workspace materialization helper.** *Independent.* Copy `GraduatedProblem.workspace_dir` into a temp directory the trial can mutate; return the temp path. v1 isolation strategy: tmpdir copy. (Workspace isolation gets a future ADR; this is the placeholder.) **Per Phase 1's contract,** materialization is invoked by the harness adapter, not by `TrialRunner` — the runner continues to pass `problem.workspace_dir` through unchanged.
 
-- **2.2 CliSubprocessAdapter.** *Depends on 2.1.* Spawn Pi as a subprocess against the materialized workspace, with the package's prompt/system-prompt/template-values surfaced via Pi's CLI flags or a generated `pi.json`. Capture Pi's stdout event stream and exit code into `RawTelemetry`. TDD: a fixture mocking Pi (a tiny script standing in) verifies the adapter parses the event stream and returns the expected `RawTelemetry`.
+- **2.2 CliSubprocessAdapter.** *Depends on 2.1.* Spawn Pi as a subprocess against the materialized workspace, with the package's prompt/system-prompt/template-values surfaced via Pi's CLI flags or a generated `pi.json`. The adapter calls the workspace helper from 2.1 internally before spawning Pi. Capture Pi's stdout event stream and exit code into `RawTelemetry`. TDD: a fixture mocking Pi (a tiny script standing in) verifies the adapter parses the event stream and returns the expected `RawTelemetry`.
 
-- **2.3 Validation execution.** *Depends on 2.2.* After Pi finishes, run each `ValidationStep.command` in the materialized workspace; capture exit codes. TDD: validation against a workspace where the agent succeeded and one where it failed.
+- **2.3 Validation execution.** *Depends on 2.2.* After Pi finishes, run each `ValidationStep.command` in the materialized workspace; capture exit codes. **Extends `RawTelemetry`** with a `validation_results: list[ValidationResult]` field carrying `(step_name, exit_code, stdout, stderr)` per step, so scoring stays a pure function of telemetry. TDD: validation against a workspace where the agent succeeded and one where it failed.
 
-- **2.4 Real `SyntheticSuiteScorer`.** *Depends on 2.2, 2.3.* Derive `tokens_consumed` from Pi telemetry, `validation_pass_rate` from validation exit codes, `quality_score` as a simple synthetic (e.g., validation pass rate × 1.0 — intentionally minimal in v1; weights and additional axes land in their own ADR). TDD: known telemetry → expected metrics.
+- **2.4 Real `SyntheticSuiteScorer`.** *Depends on 2.2, 2.3.* Derive `tokens_consumed` from Pi telemetry, `validation_pass_rate` from `RawTelemetry.validation_results` exit codes, `quality_score` as a simple synthetic (e.g., validation pass rate × 1.0 — intentionally minimal in v1; weights and additional axes land in their own ADR). Per-trial cross-problem aggregation continues to live in `TrialRunner._aggregate`; the scorer is per-(telemetry → metrics) only. TDD: known telemetry → expected metrics.
 
 - **2.5 Acceptance test.** *Depends on 2.4 + Phase 1.7.* End-to-end with real Pi, the v0 baseline package (gemini-flash + supplied system prompt + Read/Write/Edit/Bash tool subset), single graduated problem; assert the trial directory contains real metrics from a real run. Requires Pi installed; document under a contributors-guide note.
 
@@ -145,9 +152,10 @@ Steps 3.1 and 3.3 can begin in parallel.
 - **4.5 Acceptance test.** *Depends on 4.4.* Construct a configuration we know will scale poorly (e.g., a small model that fails on hard problems); confirm `scaling_slope` captures it and the frontier ranks accordingly.
 
 **Interface-review checkpoint.** Before Phase 5:
-- Should capability-profile aggregation be a `MetricAggregatorPort`, or stay an inline computation?
+- Should capability-profile aggregation be a `MetricAggregatorPort`, or stay an inline computation? Phase 1 already has a private `TrialRunner._aggregate` helper — Phase 4 must decide: lift it to a port, generalize it inline for fibered metrics, or replace it altogether.
 - Are the chosen summary axes the right ones, or does v1 evidence point at different/additional axes?
 - Does the scaling-slope regression behave reasonably with sparse difficulty coverage?
+- All assertions on aggregated rate/quality must use `pytest.approx` (Phase 1 hit float-precision drift on `mean([0.8, 0.8, 0.8])`).
 
 ---
 
@@ -161,7 +169,7 @@ Steps 3.1 and 3.3 can begin in parallel.
 
 - **5.1 Subjective-score event schema.** *Independent.* Define the event shape (trial id, score, optional notes, timestamp, scorer identity). TDD: serialization round-trip.
 
-- **5.2 Append-and-finalize.** *Depends on 5.1.* CLI command appends to `events.jsonl` and atomically rewrites `final.json` (write-temp + rename). TDD: concurrent append safety; idempotent re-application.
+- **5.2 Append-and-finalize.** *Depends on 5.1.* Phase 1's `PersistencePort.finalize_trial(trial_id, final_metrics, subjective_score=None)` closes a trial in one shot at objective-scoring time. Phase 5 adds either a new port method `update_subjective_score(trial_id, score)` or explicit re-finalize semantics — pick during 5.2 RFD. The CLI appends a subjective-score event to `events.jsonl` and atomically rewrites `final.json` (write-temp + rename, matching the existing pattern). TDD: concurrent append safety; idempotent re-application; no recomputation of objective metrics on subjective updates.
 
 - **5.3 Partial-score policy.** *Depends on Phase 4.* Optimizer reads a partial trial as having `subjective = None`. Define an explicit policy: missing subjective is excluded from any axis that depends on it (rather than imputed). TDD: a history mix produces a Pareto frontier that includes partially-scored trials in axes that don't require subjective.
 
