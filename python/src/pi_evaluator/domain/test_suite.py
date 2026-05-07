@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import List
 
 
 @dataclass
@@ -24,8 +23,8 @@ class GraduatedProblem:
     difficulty: int  # 1 (easiest) to 5 (hardest)
     prompt: str
     workspace_dir: str
-    validation_steps: List[ValidationStep]
-    tags: List[str]
+    validation_steps: list[ValidationStep]
+    tags: list[str]
 
     @classmethod
     def from_dict(cls, data: dict) -> "GraduatedProblem":
