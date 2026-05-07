@@ -229,6 +229,20 @@ Per the deployment-scenarios memory and the existing ADR backlog:
 
 ---
 
+## Open spikes
+
+In-flight design spikes — tracked here so they don't get forgotten and so phase steps that depend on them have a clear pointer. Each entry resolves into an Accepted/Rejected ADR (or, for sub-ADR-weight findings, a `docs/design-notes.md` entry with the ADR Withdrawn). See [`docs/adrs/README.md`](adrs/README.md) for the spike workflow.
+
+| ADR | Question | Target phase | Status |
+| --- | --- | --- | --- |
+| [0005](adrs/0005-trial-cost-and-budget.md) | Cost-tracking unit, per-trial cost cap, project-level budget | 3.3 / 3.4 | Proposed; not yet started |
+| [0006](adrs/0006-reproducibility-under-stochastic-agents.md) | Variance suppression vs. replication vs. modelled noise | 3.4 / 6.2 | Proposed; not yet started |
+| [0007](adrs/0007-pi-invocation-lifecycle.md) | Per-trial timeout, signal handling, partial-trial recording, retry | 3.4 | Proposed; not yet started |
+
+When a spike closes, remove its row from this table; the ADR file remains as the durable record of the decision (or non-decision).
+
+---
+
 ## Ready to start?
 
 The first piece of work is **Phase 1, Step 1.1** (domain types). Steps 1.1 and 1.2 can begin in parallel; after 1.1, steps 1.3–1.6 are independent of each other and can parallelize.
