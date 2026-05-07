@@ -216,6 +216,7 @@ Per the deployment-scenarios memory and the existing ADR backlog:
 - **Pareto-vector vs. scalarized quality.** Placeholder ADR pending; v1 uses 3D `(mean_cost, scaling_slope, mean_quality)`.
 - **Multi-task GP / graph-kernel / GNN surrogates.** Phase 6 uses simple GP; richer surrogates land in v2.
 - **Subjective-score elicitation UX.** Phase 5 ships a CLI; richer surfaces (IDE plugin, web form) belong to the individual-scenario adapter.
+- **Explicit packaging surface (`__init__.py`, public re-exports).** Today the `pi_evaluator` tree relies on PEP 420 namespace packages — no `__init__.py` files exist and tests/imports resolve cleanly. Revisit when the `dev` and `deploy` mise tasks materialize: packaging the library for deployment to the Pi runtime may force explicit `__init__.py` files for build tools, runtime import-time validation, or a curated public surface (`from pi_evaluator import TrialRunner`).
 
 ---
 
