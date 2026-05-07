@@ -1,6 +1,6 @@
 # Title: 0004 - Workspace Isolation Strategy
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
