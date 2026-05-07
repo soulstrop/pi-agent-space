@@ -1,11 +1,29 @@
 [tools]
 python = "3.13"
+ruff = "latest"
+ty = "latest"
 uv = "latest"
 
-[tasks.build]
-description = "Build python project"
-run = "uv build"
+[tasks.setup]
+description = "Install Python project dependencies (incl. dev)"
+run = "uv sync"
+
+[tasks.lint]
+description = "Lint Python sources with ruff"
+run = "uv run ruff check ."
+
+[tasks.format]
+description = "Format Python sources with ruff"
+run = "uv run ruff format ."
+
+[tasks.typecheck]
+description = "Type-check Python sources with ty"
+run = "uv run ty check"
 
 [tasks.test]
-description = "Run python tests"
+description = "Run Python tests"
 run = "uv run pytest"
+
+[tasks.build]
+description = "Build Python project"
+run = "uv build"

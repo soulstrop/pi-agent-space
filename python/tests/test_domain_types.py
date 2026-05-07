@@ -44,7 +44,8 @@ def test_package_holds_fields():
 def test_package_is_frozen():
     p = _pkg()
     with pytest.raises(FrozenInstanceError):
-        p.model = "claude"  # type: ignore[misc]
+        # setattr bypasses static type checking; runtime FrozenInstanceError still fires
+        setattr(p, "model", "claude")
 
 
 def test_metrics_holds_fields():
@@ -57,7 +58,7 @@ def test_metrics_holds_fields():
 def test_metrics_is_frozen():
     m = Metrics(tokens_consumed=0, validation_pass_rate=0.0, quality_score=0.0)
     with pytest.raises(FrozenInstanceError):
-        m.tokens_consumed = 999  # type: ignore[misc]
+        setattr(m, "tokens_consumed", 999)
 
 
 def test_subjective_score_holds_fields():

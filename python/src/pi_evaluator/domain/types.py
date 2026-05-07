@@ -18,6 +18,7 @@ class Package:
     set): rearranging the list represents a semantically different
     package.
     """
+
     model: str
     system_prompt: str
     skills: list[str]
@@ -31,6 +32,7 @@ class RawTelemetry:
     Phase 1 minimal shape: agent event stream + exit code. Phase 2
     expands this with validation results and possibly artifacts.
     """
+
     events: list[dict]
     exit_code: int
 
@@ -41,6 +43,7 @@ class Metrics:
 
     Capability-profile / fibered metrics arrive in Phase 4.
     """
+
     tokens_consumed: int
     validation_pass_rate: float
     quality_score: float
@@ -49,6 +52,7 @@ class Metrics:
 @dataclass(frozen=True)
 class SubjectiveScore:
     """Async, partial scoring slot. May be absent on a closed trial."""
+
     score: float
     notes: str
     scorer: str
@@ -58,6 +62,7 @@ class SubjectiveScore:
 @dataclass(frozen=True)
 class EvalSuiteRef:
     """Lightweight pointer to which eval suite the trial ran against."""
+
     suite_id: str
     suite_version: str
 
@@ -65,6 +70,7 @@ class EvalSuiteRef:
 @dataclass(frozen=True)
 class VersionVector:
     """Frozen-at-trial-start version snapshot."""
+
     pi_version: str
     package_versions: dict[str, str]
     eval_suite_version: str
@@ -73,6 +79,7 @@ class VersionVector:
 @dataclass(frozen=True)
 class TrialEvent:
     """One event in events.jsonl."""
+
     phase: str
     timestamp: str
     payload: dict = field(default_factory=dict)
@@ -85,6 +92,7 @@ class Trial:
     Mutable: events accrue as phases complete. ``final_metrics`` and
     ``subjective_score`` remain ``None`` until their phases land.
     """
+
     trial_id: str
     package: Package
     eval_suite_ref: EvalSuiteRef

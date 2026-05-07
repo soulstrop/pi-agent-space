@@ -1,3 +1,35 @@
+[tasks.setup]
+description = "Install dependencies in all subprojects"
+depends = ["setup-python"]
+
+[tasks.setup-python]
+dir = "python"
+run = "mise run setup"
+
+[tasks.lint]
+description = "Lint all subprojects"
+depends = ["lint-python"]
+
+[tasks.lint-python]
+dir = "python"
+run = "mise run lint"
+
+[tasks.format]
+description = "Format all subprojects"
+depends = ["format-python"]
+
+[tasks.format-python]
+dir = "python"
+run = "mise run format"
+
+[tasks.typecheck]
+description = "Type-check all subprojects"
+depends = ["typecheck-python"]
+
+[tasks.typecheck-python]
+dir = "python"
+run = "mise run typecheck"
+
 [tasks.test]
 description = "Run tests in all subprojects"
 depends = ["test-haskell", "test-python"]

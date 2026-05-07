@@ -1,3 +1,5 @@
+import json
+
 from pi_evaluator.domain.identity import candidate_identity
 
 
@@ -99,6 +101,3 @@ def test_digest_is_64_hex_chars():
     h = candidate_identity(p, s, v)
     assert len(h) == 64
     assert all(c in "0123456789abcdef" for c in h)
-
-
-import json  # placed at end; only needed by the pretty-print test

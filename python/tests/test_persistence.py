@@ -70,7 +70,13 @@ def test_append_is_order_preserving_across_repeated_calls(tmp_path):
     for i in range(5):
         adapter.append_event("t-001", TrialEvent(phase=f"e{i}", timestamp=f"t{i}"))
     lines = (tmp_path / "t-001" / "events.jsonl").read_text().splitlines()
-    assert [json.loads(l)["phase"] for l in lines] == ["e0", "e1", "e2", "e3", "e4"]
+    assert [json.loads(line)["phase"] for line in lines] == [
+        "e0",
+        "e1",
+        "e2",
+        "e3",
+        "e4",
+    ]
 
 
 def test_finalize_writes_final_json(tmp_path):
