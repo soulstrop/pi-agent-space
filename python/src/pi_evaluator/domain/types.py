@@ -25,6 +25,17 @@ class Package:
 
 
 @dataclass(frozen=True)
+class RawTelemetry:
+    """Raw output from an agent run, before scoring.
+
+    Phase 1 minimal shape: agent event stream + exit code. Phase 2
+    expands this with validation results and possibly artifacts.
+    """
+    events: list[dict]
+    exit_code: int
+
+
+@dataclass(frozen=True)
 class Metrics:
     """Objective scoring output (Phase 1 scalar shape).
 

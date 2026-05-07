@@ -1,28 +1,24 @@
+"""AgentHarnessPort: boundary between the optimizer and (Pi + package)."""
+
+from __future__ import annotations
+
 from typing import Protocol, runtime_checkable
-from dataclasses import dataclass
-from typing import Any
 
-@dataclass
-class Metrics:
-    tokens_consumed: int
-    quality_score: float
+from ..domain.test_suite import GraduatedProblem
+from ..domain.types import Package, RawTelemetry
 
-@dataclass
-class Trial:
-    # Represents the configuration (AgentGraph in Haskell) being tested
-    config: Any 
-    metrics: Metrics
 
 @runtime_checkable
 class AgentHarnessPort(Protocol):
+    """Run (Pi + package) against a problem; return raw telemetry.
+
+    Workspace materialization is an internal concern of the adapter.
+    Scoring is a separate port; this one only produces raw telemetry.
     """
-    Port defining how the optimization domain communicates with the Pi agent harness.
-    Adapters will implement this using CLI, RPC, or SDK.
-    """
-    
-    def evaluate_configuration(self, config: Any, problem_prompt: str) -> Metrics:
-        """
-        Executes the Pi agent with the given configuration and problem, 
-        returning the performance metrics.
-        """
-        ...
+
+    def run(
+        self,
+        package: Package,
+        problem: GraduatedProblem,
+        workspace: str,
+    ) -> RawTelemetry: ...
