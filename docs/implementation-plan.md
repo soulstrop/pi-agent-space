@@ -43,6 +43,15 @@ The orchestrator is `TrialRunner`, which composes these ports to execute one tri
 - `PersistencePort.finalize_trial(trial_id, final_metrics, subjective_score=None)` is one-shot at trial close. Phase 5's async-subjective path needs an additional method (or explicit re-finalize semantics) so that subjective scores can land after the trial closes without re-running objective scoring.
 - Float precision bites trivially-symmetric aggregates (e.g., `mean([0.8, 0.8, 0.8]) == 0.8000000000000002`). Tests across Phases 4–6 must use `pytest.approx` for any aggregated rate/quality metric.
 
+**Phase 2 outcomes feeding later phases.**
+
+- The Pi invocation pattern is fixed: `pi --print --no-session --mode json --model <provider/id> --system-prompt <text> --tools <csv> "<prompt>"`. Recorded in `docs/design-notes.md`. Phase 6 featurization assumes this shape.
+- `package.skills` values are passed verbatim to Pi's `--tools` flag. Slot-space schemas in Phase 3.1 must enumerate valid Pi tool names (built-ins: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) and decide how to handle extension-installed tools.
+- Pi's `usage` field carries both `totalTokens` and a per-call `cost` in dollars. v1 only surfaces `tokens_consumed`; the **cost-unit decision** (tokens, dollars, or separate axes) lands in ADR 0005 and shapes Phase 4's `mean_cost` axis and Phase 6's surrogate.
+- `subprocess.run` with no timeout is the v1 invocation. Real Pi runs can be minutes long or hang. Per-trial timeout / abort / cleanup policy lands in ADR 0007; Phase 3.4 (optimizer driver) surfaces it because unattended multi-trial runs make the policy load-bearing.
+- LLM outputs are non-deterministic. Two trials of the same `(package, problem)` will produce different telemetry. ADR 0006 covers the reproducibility/replication policy — informs whether Phase 3 runs each config once or N times, and how the Phase 6 surrogate models (config, problem) → metrics noise.
+- `GraduatedProblemSetAdapter` loads every `problem.json` in its base dir. Once Phase 4.1 lands 002+ problems, the Phase 2.5 and any future single-problem acceptance tests will iterate the whole suite on real Pi — slow and costly. The adapter (or its callers) needs a `problem_ids: list[str] | None` filter or a tmpdir-copied subset before 002 lands.
+
 ---
 
 ## Phase 1 — Single-trial smoke pipeline
@@ -114,15 +123,15 @@ Steps 1.1 and 1.2 can begin in parallel. After 1.1, steps 1.3, 1.4, 1.5, 1.6 are
 
 **Steps.**
 
-- **3.1 Slot/value space schema.** *Independent.* Declare slots and candidate values (the v0 baseline + at least one alternative per slot per the seed-variations decision). TDD: enumerating the space yields the expected Cartesian product (or sampled subset).
+- **3.1 Slot/value space schema.** *Independent.* Declare slots and candidate values (the v0 baseline + at least one alternative per slot per the seed-variations decision). Slots include `model` (provider/id strings — pick a small enum from Pi's supported providers), `skills` (subset of Pi's built-in tool names from Phase 2), `system_prompt` (variant catalog), `template_values` (per Phase 1.3 plan-refinement). Each value carries the `(role, type)` tag from the Bockeler distinction. **Validate skill values against Pi's tool list** so a proposed package can actually run. TDD: enumerating the space yields the expected Cartesian product (or sampled subset); invalid skill names are rejected at schema-load time.
 
 - **3.2 RandomFromSlotSpace proposer.** *Depends on 3.1.* `propose(history) -> Package` as uniform random over the declared space, excluding configurations already evaluated (by candidate-identity from 1.2). TDD: with mocked history, proposer skips already-evaluated identities; without history, samples freely.
 
-- **3.3 Pareto frontier (2D).** *Independent.* Compute the Pareto frontier over `(mean_cost, mean_quality)` from a list of trials. TDD: hand-verified frontier members on a known trial set.
+- **3.3 Pareto frontier (2D).** *Independent.* Compute the Pareto frontier over `(mean_cost, mean_quality)` from a list of trials. **Cost-unit choice (tokens vs dollars) per ADR 0005** — pin the unit before this lands. TDD: hand-verified frontier members on a known trial set.
 
-- **3.4 Optimizer driver.** *Depends on 3.2, 3.3, Phase 2.* Loop: load history → propose → run trial → persist → recompute frontier. Bounded by a trial budget. TDD: with a stub harness that returns deterministic metrics by config, the driver produces the expected frontier within budget.
+- **3.4 Optimizer driver.** *Depends on 3.2, 3.3, Phase 2.* Loop: load history → propose → run trial → persist → recompute frontier. Bounded by a trial budget. **Per-trial timeout / abort policy per ADR 0007** — unattended multi-trial runs need it. **Cost cap policy per ADR 0005.** TDD: with a stub harness that returns deterministic metrics by config, the driver produces the expected frontier within budget.
 
-- **3.5 Acceptance test.** *Depends on 3.4.* Run the optimizer against the real Pi for a small budget (~4–6 trials) over the slot space; assert all trials persist and a frontier file is generated.
+- **3.5 Acceptance test.** *Depends on 3.4.* Run the optimizer against the real Pi for a small budget (~4–6 trials) over the slot space; assert all trials persist and a frontier file is generated. **Filter `GraduatedProblemSetAdapter` to a fixed problem-ID list** so the test is stable when 002+ land.
 
 Steps 3.1 and 3.3 can begin in parallel.
 
@@ -141,13 +150,13 @@ Steps 3.1 and 3.3 can begin in parallel.
 
 **Steps.**
 
-- **4.1 Multi-difficulty suite.** *Independent.* Add at least two more graduated problems at higher difficulty (e.g., `002_*` at difficulty 2, `003_*` at difficulty 3). TDD: suite loader yields all problems, sorted/groupable by difficulty.
+- **4.1 Multi-difficulty suite.** *Independent.* Add at least two more graduated problems at higher difficulty (e.g., `002_*` at difficulty 2, `003_*` at difficulty 3). TDD: suite loader yields all problems, sorted/groupable by difficulty. **Update Phase 2.5 and Phase 3.5 acceptance tests to filter to a stable single-problem subset** so they don't iterate the whole suite on every real-Pi run.
 
 - **4.2 Per-(problem, metric) events.** *Depends on Phase 2 ScoringPort.* Each trial's `events.jsonl` records one event per (problem, metric) pair, not aggregated. TDD: a multi-problem trial writes events for every problem.
 
 - **4.3 Capability-profile aggregation.** *Depends on 4.2.* Lazy aggregation: take a trial's per-problem events and compute `(mean, p95, scaling_slope)` for each metric. Scaling slope = regression of `log(metric)` vs `difficulty`. TDD: known per-difficulty arrays produce hand-verified summaries.
 
-- **4.4 Pareto frontier (3D).** *Depends on 4.3.* Extend Pareto computation to `(mean_cost, scaling_slope, mean_quality)`. TDD: a synthetic trial set demonstrates that a high-slope cheap configuration is not dominated by a low-slope moderate one.
+- **4.4 Pareto frontier (3D).** *Depends on 4.3.* Extend Pareto computation to `(mean_cost, scaling_slope, mean_quality)`. The cost axis uses the unit chosen in ADR 0005; if both tokens and dollars are tracked separately, this becomes a 4D frontier. TDD: a synthetic trial set demonstrates that a high-slope cheap configuration is not dominated by a low-slope moderate one.
 
 - **4.5 Acceptance test.** *Depends on 4.4.* Construct a configuration we know will scale poorly (e.g., a small model that fails on hard problems); confirm `scaling_slope` captures it and the frontier ranks accordingly.
 
@@ -190,7 +199,7 @@ Steps 3.1 and 3.3 can begin in parallel.
 
 **Steps.**
 
-- **6.1 Featurize Package.** *Independent.* Map a `Package` to a feature vector suitable for the surrogate. TDD: identical packages yield identical features; semantically distinct packages yield distinct features.
+- **6.1 Featurize Package.** *Independent.* Map a `Package` to a feature vector suitable for the surrogate. **Featurization piggy-backs on the Phase 3.1 slot/value schema** rather than treating Package as raw text — provider/id strings, free-text system prompts, and arbitrary skills lists are too high-dimensional otherwise. TDD: identical packages yield identical features; semantically distinct packages yield distinct features.
 
 - **6.2 Surrogate model.** *Depends on 6.1.* Start with a simple Gaussian Process over the feature vector predicting `(mean_cost, mean_quality, scaling_slope)`. TDD: trained on a known function, the surrogate predicts within tolerance on held-out points.
 
