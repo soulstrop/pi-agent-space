@@ -127,3 +127,6 @@ def test_phase2_acceptance_end_to_end(tmp_path):
     assert "metrics" in final
     assert isinstance(final["metrics"]["tokens_consumed"], int)
     assert isinstance(final["metrics"]["validation_pass_rate"], float)
+    # ADR 0007 outcome classification: must be set, must be a known value.
+    assert final["outcome"] in {"completed", "boundary_violation", "error_escalated"}
+    assert trial.outcome == final["outcome"]

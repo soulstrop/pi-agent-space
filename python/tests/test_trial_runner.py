@@ -173,6 +173,44 @@ def test_run_trial_with_empty_suite_emits_only_configured_and_finalized(tmp_path
     )
 
 
+def test_run_trial_default_outcome_is_completed(tmp_path):
+    runner, _ = _runner(tmp_path)
+    trial = runner.run_trial("t-001", _package(), _suite_ref(), _versions())
+    assert trial.outcome == "completed"
+    finalized = next(e for e in trial.events if e.phase == "finalized")
+    assert finalized.payload["outcome"] == "completed"
+
+
+def test_run_trial_classifies_nonzero_exit_as_error_escalated(tmp_path):
+    runner, _ = _runner(
+        tmp_path,
+        telemetry=RawTelemetry(events=[], exit_code=1),
+    )
+    trial = runner.run_trial("t-001", _package(), _suite_ref(), _versions())
+    assert trial.outcome == "error_escalated"
+
+
+def test_run_trial_classifies_assistant_stop_reason_error_as_error_escalated(tmp_path):
+    runner, _ = _runner(
+        tmp_path,
+        telemetry=RawTelemetry(
+            events=[
+                {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "stopReason": "error",
+                        "usage": {"totalTokens": 0},
+                    },
+                }
+            ],
+            exit_code=0,
+        ),
+    )
+    trial = runner.run_trial("t-001", _package(), _suite_ref(), _versions())
+    assert trial.outcome == "error_escalated"
+
+
 def test_run_trial_passes_workspace_to_harness(tmp_path):
     """The harness receives ``problem.workspace_dir`` as its workspace
     argument (Phase 1 placeholder; Phase 2 introduces tmpdir copy)."""

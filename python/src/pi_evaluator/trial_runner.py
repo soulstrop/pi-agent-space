@@ -8,7 +8,9 @@ from datetime import UTC, datetime
 from .domain.types import (
     EvalSuiteRef,
     Metrics,
+    Outcome,
     Package,
+    RawTelemetry,
     Trial,
     TrialEvent,
     VersionVector,
@@ -71,10 +73,12 @@ class TrialRunner:
 
         problems = self._suite_source.load()
         per_problem_metrics: list[Metrics] = []
+        per_problem_telemetry: list[RawTelemetry] = []
         for problem in problems:
             telemetry = self._harness.run(package, problem, problem.workspace_dir)
             metrics = self._scorer.score_objective(telemetry)
             per_problem_metrics.append(metrics)
+            per_problem_telemetry.append(telemetry)
 
             self._emit(
                 trial,
@@ -102,7 +106,9 @@ class TrialRunner:
             )
 
         final_metrics = _aggregate(per_problem_metrics)
+        outcome = _classify_outcome(per_problem_telemetry)
         trial.final_metrics = final_metrics
+        trial.outcome = outcome
         self._emit(
             trial,
             TrialEvent(
@@ -112,11 +118,12 @@ class TrialRunner:
                     "tokens_consumed": final_metrics.tokens_consumed,
                     "validation_pass_rate": final_metrics.validation_pass_rate,
                     "quality_score": final_metrics.quality_score,
+                    "outcome": outcome,
                 },
             ),
         )
 
-        self._persistence.finalize_trial(trial.trial_id, final_metrics)
+        self._persistence.finalize_trial(trial.trial_id, final_metrics, outcome)
         return trial
 
     def _emit(self, trial: Trial, event: TrialEvent) -> None:
@@ -133,3 +140,29 @@ def _aggregate(metrics: list[Metrics]) -> Metrics:
         validation_pass_rate=sum(m.validation_pass_rate for m in metrics) / n,
         quality_score=sum(m.quality_score for m in metrics) / n,
     )
+
+
+def _classify_outcome(telemetries: list[RawTelemetry]) -> Outcome:
+    """ADR 0007 trial-outcome classification.
+
+    Any model-layer error in any problem's telemetry escalates the
+    whole trial. ``boundary_violation`` is unreachable until Phase 3.4
+    lands timeout / cost-cap enforcement.
+    """
+    if any(_has_model_error(t) for t in telemetries):
+        return "error_escalated"
+    return "completed"
+
+
+def _has_model_error(telemetry: RawTelemetry) -> bool:
+    if telemetry.exit_code != 0:
+        return True
+    for event in telemetry.events:
+        if event.get("type") != "message_end":
+            continue
+        message = event.get("message") or {}
+        if message.get("role") != "assistant":
+            continue
+        if message.get("stopReason") == "error":
+            return True
+    return False

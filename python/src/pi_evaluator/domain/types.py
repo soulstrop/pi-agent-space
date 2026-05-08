@@ -7,6 +7,19 @@ accrue across phases.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
+
+Outcome = Literal["completed", "boundary_violation", "error_escalated"]
+"""ADR 0007 trial outcome enum.
+
+* ``completed``: the agent ran to natural termination without errors.
+* ``boundary_violation``: a configured boundary was crossed (timeout,
+  per-trial cost cap, etc.). Reachable once Phase 3.4 lands the
+  driver-side enforcement.
+* ``error_escalated``: a transient or persistent failure that the
+  driver's retry budget could not absorb. The trial directory is
+  preserved for asynchronous human classification.
+"""
 
 
 @dataclass(frozen=True)
@@ -123,3 +136,4 @@ class Trial:
     events: list[TrialEvent] = field(default_factory=list)
     final_metrics: Metrics | None = None
     subjective_score: SubjectiveScore | None = None
+    outcome: Outcome | None = None

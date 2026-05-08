@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from ..domain.types import Metrics, SubjectiveScore, Trial, TrialEvent
+from ..domain.types import Metrics, Outcome, SubjectiveScore, Trial, TrialEvent
 
 
 @runtime_checkable
@@ -29,6 +29,7 @@ class PersistencePort(Protocol):
         self,
         trial_id: str,
         final_metrics: Metrics,
+        outcome: Outcome,
         subjective_score: SubjectiveScore | None = None,
     ) -> None: ...
 

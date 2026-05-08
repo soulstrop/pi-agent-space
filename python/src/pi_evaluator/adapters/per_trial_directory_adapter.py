@@ -9,6 +9,7 @@ from pathlib import Path
 from ..domain.types import (
     EvalSuiteRef,
     Metrics,
+    Outcome,
     Package,
     SubjectiveScore,
     Trial,
@@ -53,14 +54,15 @@ class PerTrialDirectoryAdapter(PersistencePort):
         self,
         trial_id: str,
         final_metrics: Metrics,
+        outcome: Outcome,
         subjective_score: SubjectiveScore | None = None,
     ) -> None:
         d = self._trial_dir(trial_id)
         final = {
             "metrics": asdict(final_metrics),
+            "outcome": outcome,
             "subjective_score": asdict(subjective_score) if subjective_score else None,
         }
-        # Atomic write: temp + rename.
         tmp = d / "final.json.tmp"
         tmp.write_text(json.dumps(final, indent=2, sort_keys=True))
         tmp.replace(d / "final.json")
@@ -90,10 +92,12 @@ class PerTrialDirectoryAdapter(PersistencePort):
                     events.append(TrialEvent(**json.loads(line)))
             final_metrics: Metrics | None = None
             subjective: SubjectiveScore | None = None
+            outcome: Outcome | None = None
             final_file = trial_dir / "final.json"
             if final_file.exists():
                 final = json.loads(final_file.read_text())
                 final_metrics = Metrics(**final["metrics"])
+                outcome = final.get("outcome")
                 if final.get("subjective_score"):
                     subjective = SubjectiveScore(**final["subjective_score"])
             trials.append(
@@ -105,6 +109,7 @@ class PerTrialDirectoryAdapter(PersistencePort):
                     events=events,
                     final_metrics=final_metrics,
                     subjective_score=subjective,
+                    outcome=outcome,
                 )
             )
         return trials

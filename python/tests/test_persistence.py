@@ -83,9 +83,10 @@ def test_finalize_writes_final_json(tmp_path):
     adapter = PerTrialDirectoryAdapter(tmp_path)
     adapter.save_trial(_trial())
     metrics = Metrics(tokens_consumed=100, validation_pass_rate=1.0, quality_score=0.9)
-    adapter.finalize_trial("t-001", metrics)
+    adapter.finalize_trial("t-001", metrics, "completed")
     final = json.loads((tmp_path / "t-001" / "final.json").read_text())
     assert final["metrics"]["tokens_consumed"] == 100
+    assert final["outcome"] == "completed"
     assert final["subjective_score"] is None
 
 
@@ -94,9 +95,18 @@ def test_finalize_with_subjective_score(tmp_path):
     adapter.save_trial(_trial())
     metrics = Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0)
     subj = SubjectiveScore(score=4.5, notes="ok", scorer="me", timestamp="t")
-    adapter.finalize_trial("t-001", metrics, subj)
+    adapter.finalize_trial("t-001", metrics, "completed", subj)
     final = json.loads((tmp_path / "t-001" / "final.json").read_text())
     assert final["subjective_score"]["score"] == 4.5
+
+
+def test_finalize_records_error_escalated_outcome(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    metrics = Metrics(tokens_consumed=0, validation_pass_rate=0.0, quality_score=0.0)
+    adapter.finalize_trial("t-001", metrics, "error_escalated")
+    final = json.loads((tmp_path / "t-001" / "final.json").read_text())
+    assert final["outcome"] == "error_escalated"
 
 
 def test_round_trip_save_append_finalize_then_load(tmp_path):
@@ -109,7 +119,7 @@ def test_round_trip_save_append_finalize_then_load(tmp_path):
         TrialEvent(phase="finalized", timestamp="t2", payload={"score": 1.0}),
     )
     metrics = Metrics(tokens_consumed=42, validation_pass_rate=0.5, quality_score=0.6)
-    adapter.finalize_trial("t-001", metrics)
+    adapter.finalize_trial("t-001", metrics, "completed")
 
     [loaded] = adapter.load_trials()
     assert loaded.trial_id == "t-001"
@@ -119,6 +129,7 @@ def test_round_trip_save_append_finalize_then_load(tmp_path):
     assert [e.phase for e in loaded.events] == ["configured", "finalized"]
     assert loaded.events[1].payload == {"score": 1.0}
     assert loaded.final_metrics == metrics
+    assert loaded.outcome == "completed"
     assert loaded.subjective_score is None
 
 
