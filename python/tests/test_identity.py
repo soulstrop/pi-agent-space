@@ -49,10 +49,20 @@ def test_reordered_package_versions_hash_equal():
     assert candidate_identity(p, s, v) == candidate_identity(p, s, v2)
 
 
-def test_reordered_skills_hash_differs():
+def test_reordered_skills_hash_equal():
+    """Pi's ``--tools`` flag is order-insensitive (verified against
+    0.74), so two packages whose only difference is skill ordering
+    refer to the same configuration and must hash equal."""
     p, s, v = _baseline()
     p2 = dict(p)
     p2["skills"] = ["test", "format", "lint"]
+    assert candidate_identity(p, s, v) == candidate_identity(p2, s, v)
+
+
+def test_skills_with_different_members_hash_differs():
+    p, s, v = _baseline()
+    p2 = dict(p)
+    p2["skills"] = ["lint", "format"]  # one element removed
     assert candidate_identity(p, s, v) != candidate_identity(p2, s, v)
 
 

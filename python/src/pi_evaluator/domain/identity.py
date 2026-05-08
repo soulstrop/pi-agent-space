@@ -21,14 +21,15 @@ def candidate_identity(
     Canonicalization rules:
       * Dict key order is irrelevant (JSON sort_keys).
       * Whitespace / pretty-printing is irrelevant.
-      * List order in ``skills`` IS significant (skills are an ordered
-        pipeline, not a set). If skills become unordered in a future
-        ADR, this canonicalization changes.
+      * ``package.skills`` is canonicalized as a sorted list. Pi treats
+        ``--tools`` as order-insensitive (verified against 0.74), so
+        permuted skill orderings refer to the same package.
       * The triple is wrapped in a typed envelope so a value cannot
         masquerade as a different field.
     """
+    package_canonical = _canonicalize_package(package_diff)
     envelope = {
-        "package": package_diff,
+        "package": package_canonical,
         "eval_suite_ref": eval_suite_ref,
         "version_vector": version_vector,
     }
@@ -39,3 +40,12 @@ def candidate_identity(
         ensure_ascii=False,
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _canonicalize_package(package: dict) -> dict:
+    if "skills" not in package:
+        return package
+    skills = package["skills"]
+    if not isinstance(skills, list):
+        return package
+    return {**package, "skills": sorted(skills)}

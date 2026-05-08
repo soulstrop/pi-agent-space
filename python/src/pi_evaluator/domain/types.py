@@ -13,9 +13,11 @@ from dataclasses import dataclass, field
 class Package:
     """A user-harness instance plus model selection.
 
-    Per project convention, ``skills`` is an ordered pipeline (not a
-    set): rearranging the list represents a semantically different
-    package.
+    ``skills`` is set-valued: Pi's ``--tools`` flag is order-insensitive
+    (verified against 0.74), so permuted orderings refer to the same
+    package. ``candidate_identity`` canonicalizes by sorting before
+    hashing. The field type stays ``list[str]`` (not ``set[str]``) for
+    JSON-serialization stability.
     """
 
     model: str
