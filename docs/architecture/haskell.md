@@ -7,11 +7,9 @@ This document covers what's in the `haskell/` tree and how to read it. The Haske
 ## Contents
 
 - [Files](#files)
-- [`AgentSpace.hs` — the DSL](#agentspacehs--the-dsl)
-- [`Ports.hs` — the three pure ports](#portshs--the-three-pure-ports)
+- [`AgentSpace.hs` — the DSL](#agentspace.hs-the-dsl)
+- [`Ports.hs` — the three pure ports](#ports.hs-the-three-pure-ports)
 - [Case Studies](#case-studies)
-  - [Claude Code](#claude-code)
-  - [OpenClaw](#openclaw)
 - [Relationship to the Math](#relationship-to-the-math)
 
 ---
@@ -52,82 +50,14 @@ The placeholder data types in `Ports.hs` (`Package`, `RawTelemetry`, `ObjectiveM
 
 ## Case Studies
 
-A useful test of the DSL's expressiveness is whether it can describe real-world agent architectures cleanly. Two case studies exercise this — one speculative, one deployed — and demonstrate that the categorical primitives chosen for the DSL (and therefore reflected in the Python's `Package` shape and the optimizer's slot space) are expressive enough to describe the architectures we care about optimizing.
+A useful test of the DSL's expressiveness is whether it can describe real-world agent architectures cleanly. Two case studies exercise this:
 
-### Claude Code
+- **Claude Code** (`haskell/src/ClaudeCodeArchitecture.hs`) — speculative reconstruction from a March 2026 leak. Demonstrates parallel sub-agents via `Par`/`Copy`/`MergeStrings`, "Dreaming" memory consolidation as a categorical trace via `ArrowLoop`, and hidden features (KAIROS, Undercover) as composed skills.
+- **OpenClaw** (`haskell/src/OpenClawArchitecture.hs`) — real, deployed messaging-gateway package. Demonstrates embedded `AgentSession` instantiation, a tool-policy pipeline of `ApplyContextSkill` morphisms, and event-stream tapping via `Copy` + parallel tensor product.
 
-The Claude Code architecture coordinates a session and spawns isolated sub-agents for parallel work. In the DSL, this is the strict monoidal tensor product (`***` / `Par`) plus the `Copy` routing primitive to safely duplicate context, followed by `MergeStrings` to gather results.
+The full walkthroughs — diagrams, code, categorical commentary — live in [`modeling-external-architectures.md`](modeling-external-architectures.md). They are not ports of these systems into pi-agent-space; they are evidence that the categorical primitives in the DSL (and therefore reflected in the Python's `Package` shape and the optimizer's slot space) are expressive enough to describe the architectures we care about optimizing.
 
-```haskell
--- Forks the context to parallel sub-agents (Explore, Plan)
-coordinatorSubAgents :: AgentGraph (Prompt, Context) Code
-coordinatorSubAgents =
-    Copy
-    >>> ( (Id >>> CallModel "Claude-3-Haiku-Explore")
-          ***
-          (Id >>> CallModel "Claude-3-Opus-Plan")
-        )
-    >>> MergeStrings
-```
-
-The "Dreaming" memory-consolidation routine — taking a modified context and feeding it back into the loop — cannot be modeled by a DAG. We use a categorical **trace**, implemented in the DSL via `ArrowLoop`:
-
-```haskell
--- The Claude Code "Dreaming" (Memory Consolidation) Loop
-dreamingLoop :: AgentGraph Code TestResult
-dreamingLoop = loop DreamSkill
-```
-
-Hidden features (KAIROS background daemon, Undercover metadata-stripping mode) compose as ordinary skills:
-
-```haskell
-claudeCodeWorkflow :: AgentGraph (Prompt, Context) TestResult
-claudeCodeWorkflow =
-    coordinatorSubAgents
-    >>> ApplySkill "KAIROS_Background_Refactor"
-    >>> ApplySkill "Strip_CoAuthoredBy_Metadata"
-    >>> RunTests
-```
-
-The GADT's typing means the Haskell compiler proves the topological connections are well-formed (e.g., the output of the KAIROS daemon matches the required input for Undercover Mode) before any execution.
-
-### OpenClaw
-
-OpenClaw implements a messaging gateway by directly importing and instantiating Pi's `AgentSession` rather than spawning it as a subprocess. The embedded paradigm requires custom tool injection, dynamic system prompt construction, and parallel event subscription for streaming intermediate results.
-
-A custom tool-policy pipeline — context-modifying operations composed sequentially:
-
-```haskell
-toolPipeline :: AgentGraph Context Context
-toolPipeline =
-    ApplyContextSkill "Filter_Tools_By_Policy"
-    >>> ApplyContextSkill "Normalize_Tool_Schemas"
-    >>> ApplyContextSkill "Enforce_Sandbox_Paths"
-```
-
-Event subscription — tapping a stream without interrupting its primary flow — is the `Copy` morphism plus a parallel tensor product, then `ExtractCode` to discard the tap's termination type:
-
-```haskell
-agentExecutionWithStreaming :: AgentGraph (Prompt, Context) Code
-agentExecutionWithStreaming =
-    Copy
-    >>> ( CallModel "OpenClaw-Embedded-Session"
-          ***
-          SubscribeStream
-        )
-    >>> ExtractCode
-```
-
-The full workflow weaves auth resolution, tool policy, and embedded-session execution:
-
-```haskell
-openClawWorkflow :: AgentGraph (Prompt, Context) TestResult
-openClawWorkflow =
-    (Id *** ApplyContextSkill "Resolve_Auth_Profile")
-    >>> (Id *** toolPipeline)
-    >>> agentExecutionWithStreaming
-    >>> RunTests
-```
+> **Forward note.** When the Python implementation supports it (a richer slot-space schema, multi-role packages, the mixed-squad workflows of ADR 0005), the case studies should be moved out of the Haskell precursor and into the Python — expressed as actual `Package` configurations the optimizer can run. Their current home in Haskell reflects where the design started, not where it should end up.
 
 ---
 
@@ -140,5 +70,6 @@ openClawWorkflow =
 ## See Also
 
 - **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — the Python implementation, which is canonical.
+- **[`modeling-external-architectures.md`](modeling-external-architectures.md)** — full walkthroughs of the Claude Code and OpenClaw case studies.
 - **[`docs/math.pdf`](../math.pdf)** — categorical formalism: monoidal structure, Pareto optimization, heteroscedastic surrogate, trial outcome sum.
 - **[`haskell/`](../../haskell/)** — the source itself; the Haskell code is meant to speak for itself.

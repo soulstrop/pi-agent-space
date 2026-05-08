@@ -300,7 +300,8 @@ The paper is a reading aid and a discipline. It does not run anything.
 
 ## See Also
 
-- **[`haskell.md`](haskell.md)** — the Haskell DSL companion: GADT, ports, case studies. Precursor artifact, not source-of-truth.
+- **[`haskell.md`](haskell.md)** — the Haskell DSL companion: GADT, ports, case-study summaries. Precursor artifact, not source-of-truth.
+- **[`modeling-external-architectures.md`](modeling-external-architectures.md)** — full walkthroughs of the Claude Code and OpenClaw case studies, demonstrating that the DSL primitives reflected in `Package` are expressive enough to describe real-world agent architectures.
 - **[`docs/math.pdf`](../math.pdf)** — categorical formalism: monoidal structure, Pareto optimization, heteroscedastic surrogate, trial outcome sum.
 - **[`docs/implementation-plan.md`](../implementation-plan.md)** — phased plan with current Phase 2 closeout state, Phase 3+ ahead.
 - **[`docs/adrs/`](../adrs/)** — architecture decisions, indexed by status (Proposed / Accepted / Rejected / Superseded / Withdrawn).

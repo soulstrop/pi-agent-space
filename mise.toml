@@ -55,15 +55,18 @@ dir = "python"
 run = "mise run build"
 
 [tasks."docs:build"]
-description = "Render docs to PDF in docs/gen/ via pandoc + mermaid-filter"
+description = "Render architecture docs to PDF in docs/gen/ via pandoc + mermaid-filter"
 run = """
 mkdir -p docs/gen
-pandoc docs/architecture/ARCHITECTURE.md \
-  --standalone \
-  --filter mermaid-filter \
-  --css=https://b.enjam.info/panam/styling.css \
-  --pdf-engine=weasyprint \
-  -o docs/gen/ARCHITECTURE.pdf
+for src in docs/architecture/ARCHITECTURE.md docs/architecture/haskell.md docs/architecture/modeling-external-architectures.md; do
+  out="docs/gen/$(basename "$src" .md).pdf"
+  pandoc "$src" \
+    --standalone \
+    --filter mermaid-filter \
+    --css=https://b.enjam.info/panam/styling.css \
+    --pdf-engine=weasyprint \
+    -o "$out"
+done
 """
 
 [tools]

@@ -1,6 +1,12 @@
-# Architecture
+# Modeling External Architectures with the Haskell DSL
 
-This directory contains architecture documentation for pi-agent-space.
+A useful test of pi-agent-space's categorical model is whether it can describe real-world agent architectures cleanly. This document walks through two case studies — one speculative, one deployed — that exercise the `AgentGraph` DSL on architectures we did not design. The cases are not ports of these systems into pi-agent-space; they are demonstrations that the categorical primitives chosen for the DSL (and therefore reflected in the Python's `Package` shape and the optimizer's slot space) are expressive enough to describe the architectures we care about optimizing.
+
+For an orientation to the DSL itself — what `AgentSpace.hs` defines, how `Ports.hs` cuts the domain — see [`haskell.md`](haskell.md). For the Python implementation that everything ultimately serves, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+> **Forward note.** These case studies live in Haskell because that's where the design started. Once the Python implementation supports multi-role packages (the mixed-squad workflows of ADR 0005, expected in Phase 5+), they should be re-expressed as runnable Python `Package` configurations the optimizer can actually drive. Treat the present Haskell form as a stepping stone.
+
+---
 
 ## Modeling Complex Architectures: The Claude Code Example
 
