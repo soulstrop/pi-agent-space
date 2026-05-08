@@ -126,6 +126,7 @@ OpenClaw is an open-source workflow implemented directly on top of the Pi agent 
 Our framework models this embedded paradigm elegantly. The custom policy filtering is modeled as a sequence of context-modifying skills. More importantly, the event subscription is modeled mathematically as a parallel process tapping the execution stream. We use $\Delta$ to copy the data stream, run the agent loop on the primary branch, and run the event subscriber on the secondary branch. The subscriber's output is then explicitly discarded via $\lozenge$ (Drop), ensuring the stream's structural integrity is maintained.
 
 \section{Optimization Over Categories}
+\label{sec:opt}
 
 Once the structural space of valid agent graphs is defined, we address the challenge of finding the optimal graph configuration. We frame this as a combinatorial Bayesian Optimization problem.
 
@@ -137,11 +138,13 @@ Let \(\Phi \in \Sigma_{\mathcal{C}}(S)\) represent a specific agent wiring. A co
 \subsection{Surrogate Modeling and Acquisition}
 In continuous Bayesian Optimization, a Gaussian Process (GP) is often used as a surrogate model. Because our search space consists of discrete categorical diagrams, we utilize a graph-based surrogate model to predict the performance of untested configurations.
 
+The map $(c, p) \mapsto \textsf{Metrics}$ from configuration--problem pairs to observed metrics is non-deterministic: model sampling, harness timing, and validation race conditions inject noise, and the noise level itself varies with the configuration --- some configurations are intrinsically more variable than others. We therefore model the surrogate as a \emph{heteroscedastic} GP, predicting both the conditional mean and an input-dependent variance:
+
 \begin{equation}
-\textsf{predictPerformance} : \textsf{History} \to \textsf{Hom}(A,B) \to \mathbb{E}[\textsf{Metrics}]
+\textsf{predictPerformance} : \textsf{History} \to \textsf{Hom}(A,B) \to \big(\mathbb{E}[\textsf{Metrics}],\ \mathrm{Var}[\textsf{Metrics} \mid \textsf{Hom}(A,B)]\big)
 \end{equation}
 
-The acquisition function systematically generates new morphisms (graphs) to test, explicitly balancing the exploration of novel agent topological structures against the exploitation of known, high-performing configurations.
+Below a threshold of accumulated trials --- the surrogate's bootstrap regime --- variance estimates from sparse data are unreliable, and acquisition reverts to pure exploration over the slot space (Latin-hypercube or uniform-random). Above the threshold, the acquisition function uses both predicted mean and variance to balance the exploration of novel agent topological structures against the exploitation of known, high-performing configurations: high-variance promising regions are sampled to reduce uncertainty, while high-variance unpromising regions are skipped.
 
 \section{Conclusion}
 By lifting agent orchestration into a strictly typed monoidal category, we decouple the structural validation of multi-agent systems from their execution. This abstraction provides a rigorous, mathematically sound foundation for deploying Sequential Decision-Making and Bayesian Optimization algorithms to autonomously design and refine the next generation of software engineering agents.
@@ -175,6 +178,20 @@ The strict lens shape assumes the backward leg always returns. Two features of r
     \item \textbf{Telemetry-based sensors} emit zero, one, or many events per trial.
 \end{itemize}
 The accurate optic is therefore not a strict lens but an \emph{affine traversal} over the sensor channel, capturing zero-or-more feedback semantics. The lens is the right first approximation for the optimization formulation; refinement to the traversal case is a target for future work.
+
+\subsection{Trial Outcomes as a Sum Type}
+
+Beyond sensor-channel partiality, the trial itself does not always yield metrics. We classify each closed trial by its \emph{outcome}:
+\begin{equation}
+\textsf{Outcome} \;=\; \textsf{Completed}(\textsf{Metrics}) \;+\; \textsf{BoundaryViolation}(\textsf{Metrics}) \;+\; \textsf{ErrorEscalated}
+\end{equation}
+where \textsf{Completed} corresponds to natural termination, \textsf{BoundaryViolation} to a configured boundary being crossed (timeout, cost cap), and \textsf{ErrorEscalated} to a transient or persistent failure that exhausted the harness's retry budget. Boundary-violated trials still record the dimensions on which the boundary was crossed, which is informative: they teach the surrogate where the cost cliff lives in feature space and bias future acquisition away from it. Error-escalated trials are preserved for asynchronous human classification but contribute no metric value.
+
+The Bayesian surrogate of Section \ref{sec:opt} therefore operates not on the full outcome space but on its metric-bearing projection
+\begin{equation}
+\pi : \textsf{Outcome} \to \textsf{Maybe}(\textsf{Metrics}), \qquad \pi(\textsf{Completed}(m)) = \pi(\textsf{BoundaryViolation}(m)) = \textsf{Just}\,m, \quad \pi(\textsf{ErrorEscalated}) = \bot
+\end{equation}
+so the optimization map's effective domain is the disjoint union of completed and boundary-violated trials. Boundary violations are signal, not loss --- they are first-class data points for the surrogate. Error-escalated trials sit outside the surrogate's input until human classification reduces them to one of the metric-bearing branches or rejects the trial.
 
 \begin{thebibliography}{1}
 
