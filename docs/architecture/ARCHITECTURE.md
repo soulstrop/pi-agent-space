@@ -1,8 +1,8 @@
 # pi-agent-space Architecture
 
-**TL;DR.** pi-agent-space is a Bayesian combinatorial-optimization system that searches for high-performing **packages** — bundles of skills, prompts, workflows, foundation-model selections, and configuration values that plug into Pi's extension surface. Trials are run, scored, and persisted through pluggable **ports** in a hexagonal Python implementation. A Haskell DSL and a categorical paper (`docs/math.pdf`) are *precursors* that informed the design and continue to discipline architectural decisions, but the Python codebase under `python/src/pi_evaluator/` is what the project actually is — the source of truth.
+**TL;DR.** pi-agent-space is a Bayesian combinatorial-optimization system that searches for high-performing **packages** — bundles of skills, prompts, workflows, foundation-model selections, and configuration values that plug into Pi's extension surface. Trials are run, scored, and persisted through pluggable **ports** in a hexagonal Python implementation under `python/src/pi_evaluator/`. A categorical paper (`docs/math.pdf`) and a Haskell DSL (`docs/architecture/haskell.md`) are precursor artifacts that informed the design, but the Python codebase is what the project actually is — the source of truth.
 
-This document orients new readers (and LLMs) to the moving parts and how they fit together.
+This document orients new readers (and LLMs) to the Python implementation. For the Haskell DSL companion and its case studies, see [`haskell.md`](haskell.md).
 
 ## Contents
 
@@ -13,9 +13,7 @@ This document orients new readers (and LLMs) to the moving parts and how they fi
 - [Key Domain Types](#key-domain-types)
 - [The Four Ports](#the-four-ports)
 - [Trial Persistence Layout](#trial-persistence-layout)
-- [Precursor: The Haskell DSL](#precursor-the-haskell-dsl)
 - [Precursor: The Categorical Paper](#precursor-the-categorical-paper)
-- [Modeling External Architectures](#modeling-external-architectures)
 - [See Also](#see-also)
 
 ---
@@ -63,13 +61,7 @@ flowchart TB
         end
     end
 
-    subgraph precursors [Precursors - inform the implementation]
-        AGS[AgentSpace.hs<br/>AgentGraph GADT,<br/>Outcome, paretoFrontier,<br/>predictPerformance]:::precursor
-        HPorts[Ports.hs<br/>3 pure ports]:::precursor
-        Math[docs/math.pdf<br/>categorical formalism,<br/>parametric lens, HetGP]:::precursor
-        OCA[OpenClawArchitecture.hs<br/><i>case study</i>]:::precursor
-        CCA[ClaudeCodeArchitecture.hs<br/><i>case study</i>]:::precursor
-    end
+    Math[docs/math.pdf<br/><i>categorical precursor</i>]:::precursor
 
     Pi:::external
     FS:::external
@@ -95,12 +87,7 @@ flowchart TB
     Identity --> Types
     TestSuite --> Types
 
-    AGS -. informs .-> Types
-    HPorts -. informs .-> portsBox
-    Math -. informs .-> AGS
     Math -. informs .-> Types
-    OCA --> AGS
-    CCA --> AGS
 ```
 
 **Reading the diagram.** Solid arrows are runtime calls (`A → B` means *A invokes B*). Dotted **implements** arrows mean an adapter satisfies a port's `Protocol`. Dotted **informs** arrows mean the precursor artifact shaped the implementation's design at some point — they do not mean drift is checked in real time. The Python implementation is canonical.
@@ -127,11 +114,7 @@ A new reader should know which artifact to trust when they appear to disagree.
 
 **Python (`python/src/pi_evaluator/`) is canonical.** It is what the optimizer actually does: trials run, scoring happens, files land on disk. Behavioral questions ("does the trial runner emit `outcome` on the finalized event?", "does the identity hash canonicalize skill order?") are answered by reading the Python and its tests.
 
-**The Haskell DSL and the math paper are precursors.** They informed the Python's design by working out the categorical structure first — typed agent graphs as a strict monoidal GADT, the four ports as records of functions, the user harness as a parametric lens, the trial outcome as a sum type. They continue to inform the Python: when an ADR lands that refines the domain (ADR 0006's heteroscedastic noise, ADR 0007's outcome enum), the Haskell types and the math paper are updated alongside the Python so the precursor artifacts stay coherent with the implementation.
-
-But drift between Haskell/math and Python is **not** caught in real time, and the Python is the resolver. If the Haskell `Trial` placeholder lags behind a Python `Trial` field rename, the Python is right and the Haskell catches up at the next phase boundary. If the math paper's `predictPerformance` signature describes a stricter return type than the Python implementation, the Python is right and the paper updates at its next pass.
-
-This convention is captured in project memory as *"Haskell DSL is a thinking tool — not source-of-truth; reconcile drift post hoc"*.
+The categorical paper (`docs/math.pdf`) and the Haskell DSL ([`haskell.md`](haskell.md)) are precursor artifacts that informed the Python's design — typed agent graphs as a strict monoidal structure, the four ports as records of functions, the user harness as a parametric lens, the trial outcome as a sum type. They continue to receive ADR-driven updates so they stay coherent with the implementation, but drift is **not** caught in real time and the Python is the resolver. If a precursor disagrees with the Python, the Python is right.
 
 ---
 
@@ -300,22 +283,6 @@ Each closed trial sits in `trials/{trial_id}/` with four files (per ADR 0003):
 
 ---
 
-## Precursor: The Haskell DSL
-
-Files: `haskell/src/{AgentSpace.hs, Ports.hs, ClaudeCodeArchitecture.hs, OpenClawArchitecture.hs}`.
-
-The Haskell side worked out the categorical structure before the Python landed:
-
-1. **`AgentSpace.hs`** defines `AgentGraph` as a strict monoidal GADT — `Id`, `Seq`, `Par`, `Copy`, `Drop`, `Choice`, `Loop`, plus domain morphisms (`CallModel`, `ApplySkill`, `RunTests`, `MergeStrings`, …). The GADT's typed shape gives the Haskell compiler the ability to reject ill-formed agent topologies at compile time. ADR 0007's `Outcome` sum (`Completed Metrics | BoundaryViolation Metrics | ErrorEscalated`) and ADR 0006's `NoisyEstimate` (mean + variance) are pinned down here as types so the math and the optimizer can rely on them.
-
-2. **`Ports.hs`** mirrors the Python ports as a 3-port pure cut (`AgentHarnessPort`, `ScoringPort`, `PackageProposerPort`). Persistence and eval-suite-loading are deliberately omitted — they are I/O at the edges and have Python homes. The 3:5 mismatch with Python is paid in `docs/terminology.md`.
-
-3. **The case studies** (`OpenClawArchitecture.hs`, `ClaudeCodeArchitecture.hs`) demonstrate the DSL is expressive enough to capture real and speculative agent architectures — see [Modeling External Architectures](#modeling-external-architectures) below.
-
-The Haskell continues to receive ADR-driven updates so the precursor stays honest, but it does not validate the Python in real time. When Python and Haskell disagree, Python is right.
-
----
-
 ## Precursor: The Categorical Paper
 
 File: `docs/math.tex` (built to `docs/math.pdf`).
@@ -331,93 +298,11 @@ The paper is a reading aid and a discipline. It does not run anything.
 
 ---
 
-## Modeling External Architectures
-
-A useful test of the precursor's expressiveness is whether it can describe real-world agent architectures cleanly. Two case studies in `haskell/src/{ClaudeCodeArchitecture.hs, OpenClawArchitecture.hs}` exercise this — one speculative (reconstructed from a March 2026 leak) and one real (OpenClaw, the deployed messaging-gateway package).
-
-### The Claude Code Example
-
-The Claude Code architecture coordinates a session and spawns isolated sub-agents for parallel work. In the DSL, this is the strict monoidal tensor product (`***` / `Par`) plus the `Copy` routing primitive to safely duplicate context, followed by `MergeStrings` to gather results.
-
-```haskell
--- Forks the context to parallel sub-agents (Explore, Plan)
-coordinatorSubAgents :: AgentGraph (Prompt, Context) Code
-coordinatorSubAgents =
-    Copy
-    >>> ( (Id >>> CallModel "Claude-3-Haiku-Explore")
-          ***
-          (Id >>> CallModel "Claude-3-Opus-Plan")
-        )
-    >>> MergeStrings
-```
-
-The "Dreaming" memory-consolidation routine — taking a modified context and feeding it back into the loop — cannot be modeled by a DAG. We use a categorical **trace**, implemented in the DSL via `ArrowLoop`:
-
-```haskell
--- The Claude Code "Dreaming" (Memory Consolidation) Loop
-dreamingLoop :: AgentGraph Code TestResult
-dreamingLoop = loop DreamSkill
-```
-
-Hidden features (KAIROS background daemon, Undercover metadata-stripping mode) compose as ordinary skills:
-
-```haskell
-claudeCodeWorkflow :: AgentGraph (Prompt, Context) TestResult
-claudeCodeWorkflow =
-    coordinatorSubAgents
-    >>> ApplySkill "KAIROS_Background_Refactor"
-    >>> ApplySkill "Strip_CoAuthoredBy_Metadata"
-    >>> RunTests
-```
-
-The GADT's typing means the Haskell compiler proves the topological connections are well-formed (e.g., the output of the KAIROS daemon matches the required input for Undercover Mode) before any execution.
-
-### The OpenClaw Example
-
-OpenClaw implements a messaging gateway by directly importing and instantiating Pi's `AgentSession` rather than spawning it as a subprocess. The embedded paradigm requires custom tool injection, dynamic system prompt construction, and parallel event subscription for streaming intermediate results.
-
-A custom tool-policy pipeline — context-modifying operations composed sequentially:
-
-```haskell
-toolPipeline :: AgentGraph Context Context
-toolPipeline =
-    ApplyContextSkill "Filter_Tools_By_Policy"
-    >>> ApplyContextSkill "Normalize_Tool_Schemas"
-    >>> ApplyContextSkill "Enforce_Sandbox_Paths"
-```
-
-Event subscription — tapping a stream without interrupting its primary flow — is the `Copy` morphism plus a parallel tensor product, then `ExtractCode` to discard the tap's termination type:
-
-```haskell
-agentExecutionWithStreaming :: AgentGraph (Prompt, Context) Code
-agentExecutionWithStreaming =
-    Copy
-    >>> ( CallModel "OpenClaw-Embedded-Session"
-          ***
-          SubscribeStream
-        )
-    >>> ExtractCode
-```
-
-The full workflow weaves auth resolution, tool policy, and embedded-session execution:
-
-```haskell
-openClawWorkflow :: AgentGraph (Prompt, Context) TestResult
-openClawWorkflow =
-    (Id *** ApplyContextSkill "Resolve_Auth_Profile")
-    >>> (Id *** toolPipeline)
-    >>> agentExecutionWithStreaming
-    >>> RunTests
-```
-
-The cases are not ports of these systems into pi-agent-space — they are demonstrations that the categorical primitives chosen for the DSL (and therefore reflected in the Python's `Package` shape and the optimizer's slot space) are expressive enough to describe the architectures we care about optimizing.
-
----
-
 ## See Also
 
+- **[`haskell.md`](haskell.md)** — the Haskell DSL companion: GADT, ports, case studies. Precursor artifact, not source-of-truth.
+- **[`docs/math.pdf`](../math.pdf)** — categorical formalism: monoidal structure, Pareto optimization, heteroscedastic surrogate, trial outcome sum.
 - **[`docs/implementation-plan.md`](../implementation-plan.md)** — phased plan with current Phase 2 closeout state, Phase 3+ ahead.
 - **[`docs/adrs/`](../adrs/)** — architecture decisions, indexed by status (Proposed / Accepted / Rejected / Superseded / Withdrawn).
 - **[`docs/design-notes.md`](../design-notes.md)** — sub-ADR-weight design choices and their motivations.
 - **[`docs/terminology.md`](../terminology.md)** — Bockeler harness-layer and item-type vocabulary.
-- **[`docs/math.pdf`](../math.pdf)** — categorical formalism: monoidal structure, Pareto optimization, heteroscedastic surrogate, trial outcome sum.
