@@ -42,9 +42,10 @@ module Ports where
 data Package           -- user harness instance + model selection (Bockeler)
 data GraduatedProblem  -- one validatable problem in a suite
 data RawTelemetry      -- agent's raw output: events, exit code, generated artifacts
-data ObjectiveMetrics  -- tokens, validation pass rate, static-analysis quality (computational scoring)
+data ObjectiveMetrics  -- tokens, dollars, validation pass rate, quality (computational scoring; ADR 0005 splits cost into tokens + dollars). Per ADR 0006 the (config, problem) -> ObjectiveMetrics map is non-deterministic with input-dependent variance, modeled by a heteroscedastic GP.
 data SubjectiveScore   -- human / LLM-judge rating + notes (inferential scoring; arrives async)
-data Trial             -- (package, problems, versionVector, events, finalScore)
+data Outcome           -- ADR 0007 sum: Completed ObjectiveMetrics | BoundaryViolation ObjectiveMetrics | ErrorEscalated. The optimizer's surrogate sees the Completed and BoundaryViolation projections; ErrorEscalated trials are preserved for asynchronous human classification.
+data Trial             -- (package, problems, versionVector, events, outcome :: Outcome)
 data History           -- materialized trial history seen by the proposer
 
 -- ============================================================================

@@ -13,35 +13,82 @@ type Context = [String]
 type Code    = String
 data TestResult = Pass | Fail String deriving (Show, Eq)
 
-data Metrics = Metrics 
+data Metrics = Metrics
     { tokensConsumed :: Int
     , qualityScore   :: Float
     } deriving (Show, Eq)
 
-data ModelParams = ModelParams 
-    { temperature :: Float 
+data ModelParams = ModelParams
+    { temperature :: Float
     } deriving (Show, Eq)
 
-data Trial a b = Trial 
+-- | Trial outcome per ADR 0007. The optimizer's surrogate sees
+-- 'Completed' and 'BoundaryViolation' (the latter teaches the cost
+-- cliff in feature space); 'ErrorEscalated' is preserved for
+-- asynchronous human classification and does not feed the surrogate.
+data Outcome
+    = Completed Metrics
+    | BoundaryViolation Metrics
+    | ErrorEscalated
+    deriving (Show, Eq)
+
+-- | Project an outcome to its metric-bearing branch.
+metricsOf :: Outcome -> Maybe Metrics
+metricsOf (Completed m) = Just m
+metricsOf (BoundaryViolation m) = Just m
+metricsOf ErrorEscalated = Nothing
+
+data Trial a b = Trial
     { config  :: AgentGraph a b
-    , metrics :: Metrics
+    , outcome :: Outcome
     }
 
+-- | Pareto frontier over the metric-bearing projection of trial
+-- outcomes. Error-escalated trials are dropped before frontier
+-- computation since they carry no metric.
 paretoFrontier :: [Trial a b] -> [Trial a b]
-paretoFrontier trials = 
-    [ t | t <- trials, not (isDominated t trials) ]
+paretoFrontier trials =
+    [ t | t <- trials, hasMetrics t, not (isDominated t trials) ]
   where
-    isDominated t ts = any (\other -> 
-        (tokensConsumed (metrics other) <= tokensConsumed (metrics t)) &&
-        (qualityScore (metrics other) >= qualityScore (metrics t)) &&
-        (metrics other /= metrics t)) ts
+    hasMetrics t = case metricsOf (outcome t) of
+        Just _  -> True
+        Nothing -> False
+    isDominated t ts = any (\other ->
+        case (metricsOf (outcome other), metricsOf (outcome t)) of
+            (Just mo, Just mt) ->
+                tokensConsumed mo <= tokensConsumed mt &&
+                qualityScore mo >= qualityScore mt &&
+                mo /= mt
+            _ -> False) ts
 
 type History a b = [Trial a b]
-type Expected a = Either String a
 
-predictPerformance :: History a b -> AgentGraph c d -> Expected Metrics
+-- | Heteroscedastic estimate per ADR 0006: the surrogate models both
+-- the mean and an input-dependent variance. The variance object has
+-- the same structural shape as the mean, so 'tokensConsumed' on the
+-- variance carries Var[tokens], 'qualityScore' carries Var[quality].
+data NoisyEstimate a = NoisyEstimate
+    { mean     :: a
+    , variance :: a
+    } deriving (Show, Eq)
+
+-- | Surrogate prediction. ADR 0006 commits to a heteroscedastic GP:
+-- the trial map @(config, problem) -> metrics@ is non-deterministic
+-- and the noise level varies with the configuration. The surrogate
+-- returns mean and input-dependent variance; below the bootstrap
+-- threshold the variance estimate is unreliable and acquisition
+-- falls back to pure exploration.
+--
+-- v1 stub: returns the most recent observed metrics with zero
+-- variance. The Phase 6 surrogate replaces this with a fitted
+-- HetGP.
+predictPerformance :: History a b -> AgentGraph c d -> Either String (NoisyEstimate Metrics)
 predictPerformance [] _ = Left "No history to predict from"
-predictPerformance (t:_) _ = Right (metrics t)
+predictPerformance (t:_) _ = case metricsOf (outcome t) of
+    Just m  -> Right NoisyEstimate { mean = m, variance = zeroVariance }
+    Nothing -> Left "Most recent trial has no metrics (error-escalated)"
+  where
+    zeroVariance = Metrics { tokensConsumed = 0, qualityScore = 0 }
 
 acquireNextConfiguration :: History a b -> AgentGraph Prompt TestResult
 acquireNextConfiguration _ = 

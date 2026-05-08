@@ -58,20 +58,42 @@ spec = do
       let m1 = Metrics { tokensConsumed = 1000, qualityScore = 0.8 }
           m2 = Metrics { tokensConsumed = 2000, qualityScore = 0.7 } -- dominated by m1
           m3 = Metrics { tokensConsumed = 1500, qualityScore = 0.9 } -- not dominated
-          t1 = Trial Id m1
-          t2 = Trial Id m2
-          t3 = Trial Id m3
-      map metrics (paretoFrontier [t1, t2, t3]) `shouldBe` [m1, m3]
+          t1 = Trial Id (Completed m1)
+          t2 = Trial Id (Completed m2)
+          t3 = Trial Id (Completed m3)
+      map (metricsOf . outcome) (paretoFrontier [t1, t2, t3]) `shouldBe` [Just m1, Just m3]
+
+    it "treats boundary-violated trials as data points on the frontier" $ do
+      let mGood = Metrics { tokensConsumed = 500,  qualityScore = 0.9 }
+          mBoundary = Metrics { tokensConsumed = 5000, qualityScore = 0.0 }
+          tGood = Trial Id (Completed mGood)
+          tBoundary = Trial Id (BoundaryViolation mBoundary)
+      -- The completed trial dominates the boundary-violated one on
+      -- both axes, so only the completed trial is on the frontier.
+      map (metricsOf . outcome) (paretoFrontier [tGood, tBoundary]) `shouldBe` [Just mGood]
+
+    it "excludes error-escalated trials from the frontier (ADR 0007)" $ do
+      let m1 = Metrics { tokensConsumed = 1000, qualityScore = 0.8 }
+          tCompleted = Trial Id (Completed m1)
+          tError = Trial Id ErrorEscalated
+      map (metricsOf . outcome) (paretoFrontier [tCompleted, tError]) `shouldBe` [Just m1]
 
   describe "Bayesian Optimization" $ do
-    it "predicts performance based on history (stub)" $ do
+    it "predicts performance with a noisy estimate (stub)" $ do
       let m1 = Metrics { tokensConsumed = 1000, qualityScore = 0.8 }
-          history = [Trial Id m1]
-      predictPerformance history Copy `shouldBe` Right m1
+          zeroVar = Metrics { tokensConsumed = 0, qualityScore = 0 }
+          history = [Trial Id (Completed m1)]
+      predictPerformance history Copy `shouldBe`
+        Right NoisyEstimate { mean = m1, variance = zeroVar }
 
     it "fails to predict if history is empty" $ do
       predictPerformance [] Copy `shouldBe` Left "No history to predict from"
-      
+
+    it "skips error-escalated history when predicting" $ do
+      let history = [Trial Id ErrorEscalated]
+      predictPerformance history Copy `shouldBe`
+        Left "Most recent trial has no metrics (error-escalated)"
+
     it "acquires the next configuration to test (stub)" $ do
       let history = [] :: History Prompt Prompt
       -- Just verify it returns something without erroring
