@@ -35,5 +35,6 @@ class GraduatedProblemSetAdapter(EvalSuiteSourcePort):
             if not problem_file.exists():
                 continue
             data = json.loads(problem_file.read_text())
+            data["workspace_dir"] = str(problem_dir.resolve())
             problems.append(GraduatedProblem.from_dict(data))
         return problems
