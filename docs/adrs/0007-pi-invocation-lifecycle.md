@@ -1,8 +1,6 @@
 # Title: 0007 - Pi Invocation Lifecycle
 
-**Status:** Proposed
-
-*Spike in progress; decision target Phase 3.4.*
+**Status:** Accepted
 
 ## Context
 
@@ -72,12 +70,50 @@ Implementation-detail mechanisms (signal handling — `SIGTERM` grace period, `S
 
 ## Decision
 
-TBD — pending spike.
+**Axis 1 — Classification: A2, source-of-kill-based, with the user-supplied simplification that timeouts count as boundary violations.**
+
+The entity that initiated the kill records the classification:
+
+- **Boundary violation** = the watchdog or driver decided to kill, for a deterministic reason that names a budget the trial blew past. Three concrete sub-reasons land in v1: per-trial cost cap (ADR 0005), per-run cost cap (ADR 0005), wall-clock timeout. All three are *boundaries*; none is ambiguous; none is retried.
+- **Error** = anything else Pi self-died on (non-zero exit not initiated by the watchdog, segfault, malformed event stream that breaks parsing). Errors are operationally suspicious — getting "signal" from them involves too much guessing.
+- **Operator-initiated kill** (Ctrl-C, external SIGTERM by a human or sysadmin) classifies as **error_escalated** per axis 3 — operators are chaotic, but they take responsibility, so their interventions land in the same human-attention queue as persistent errors.
+
+**Axis 2 — Retry: B1 with bounded budget; persistent errors preserve and queue, do not auto-escalate to the driver as new proposals.**
+
+The adapter retries a trial that hit an *error* (not a boundary violation) up to **N = 2 times** by default, with backoff (exact schedule is design-note territory). The retry runs against the **same materialized workspace** — preserving any state Pi started building before the error. After N retries fail, the trial is **preserved**: its workspace, partial telemetry, exit codes, and stderr are kept on disk, the trial is tagged `error_escalated`, and the optimizer driver moves on to its next proposal. The driver **does not** auto-re-propose persistent errors as fresh trials; that decision belongs to the human-in-the-loop, who reviews the queue asynchronously and classifies (e.g., "this was network down — ignore", "this was actually a boundary violation — count as cost cliff", "this is a real bug — pause runs until fixed").
+
+In addition, the driver implements a **circuit breaker** with two trip conditions, whichever fires first:
+
+- **Consecutive errored trials** exceeding a threshold (default ~5).
+- **Wall-clock time without a completed trial** exceeding a threshold T (default ~30 minutes).
+
+When the circuit trips, the driver halts the optimization run gracefully (no more proposals dispatched; the in-flight trial is allowed to complete or hit its own boundary), surfacing the situation to the operator. This catches scenarios like a sustained network outage where every trial errors quickly enough that consecutive-count alone might be slow to recognize. Both thresholds are operator-configurable; the defaults are implementation-time choices that land in `docs/design-notes.md`.
+
+**Axis 3 — Failed-trial metrics: C1, plus new event phases that carry the lifecycle outcome.**
+
+`Metrics` shape stays narrow — consistent with the ADR 0005 preference for keeping the optimization-signal layer clean and putting metadata in telemetry. For boundary-violated trials: `quality_score = 0`, `validation_pass_rate = 0`, `tokens_consumed` and `cost_dollars` carry whatever was spent at abort (real cost — not zero). The lifecycle classification rides in the trial event stream:
+
+- New event phases land in `events.jsonl`: `error_retry` (each adapter-level retry attempt), `error_escalated` (the trial is being preserved and queued for human review), `boundary_violation` (the watchdog/driver killed the trial for a named boundary). These are emitted alongside the existing phase progression — they don't replace `finalized`. Every trial still finalizes.
+- The `finalized` event payload gains an `outcome: "completed" | "boundary_violation" | "error_escalated"` field. Surrogate consumers that don't care about lifecycle ignore it; human-facing tools and the human-classification queue use it as the primary filter.
+
+The HetGP from ADR 0006 sees `boundary_violation` trials as data points in feature space — they teach the surrogate where the cost cliff lives. The HetGP does **not** see `error_escalated` trials; those sit in the human-classification queue, and only enter the optimization history if and when a human classifies them (typically as boundary violations after the fact). Errors are deliberately not optimization signal until a human disambiguates.
 
 ## Reconsider Triggers
 
-TBD — will be filled in alongside the decision.
+- **Pi gains built-in retry or cost-cap mechanisms** in a future release, superseding adapter-side enforcement.
+- **The async human-classification queue accumulates faster than humans can clear it** — operationally signals the need for an auto-classification heuristic (e.g., "errors that look like 5xx + match a known retry-on-this regex are auto-classified as transient and discarded").
+- **Persistent errors cluster around specific package configs** — a config consistently errors and a human consistently re-classifies as boundary violation. The classification rule itself needs revision to recognize the pattern.
+- **Circuit breaker fires too often or too rarely.** False positives cost optimization time; false negatives waste budget on dead networks. The thresholds may need to become adaptive.
+- **Workspace-on-retry semantics cause bugs** — e.g., Pi's tools turn out not to be idempotent and a second pass corrupts state. Forces a switch to fresh-workspace-per-retry, paying the materialization cost.
+- **Operator kills become frequent** in practice (e.g., dev workflow involves a lot of Ctrl-C). The operator path may need a less-loaded category than `error_escalated`.
 
 ## Consequences
 
-TBD — will be filled in alongside the decision.
+- The adapter (`CliSubprocessAdapter` and successors) gains: retry budget configuration (default `2`), backoff schedule, error-classification logic (watchdog-killed → boundary; everything else → error). The watchdog itself is implemented as part of the adapter or as a sibling helper — exact placement is implementation detail.
+- The optimizer driver gains: circuit-breaker policy with two thresholds (max consecutive errored trials, max wall-clock without a completed trial), preservation hook for `error_escalated` trials.
+- Three new trial event phases (`error_retry`, `error_escalated`, `boundary_violation`) join the existing phase set (`configured`, `eval`, `scored_objective`, `scored_subjective`, `finalized`). The `finalized` event payload gains an `outcome` field; absent on existing trials it defaults to `"completed"` for backward compatibility.
+- `Metrics` shape is unchanged. All lifecycle status is event-stream-only.
+- Persistence layer adds a notion of "preserved trial" — concretely, an `error_escalated` trial's directory contains its full `events.jsonl`, the `final.json` with `outcome: "error_escalated"`, and a copy of the materialized workspace (or a reference thereof). Implementation detail (sibling directory? status flag in `final.json`? both?) lands in `docs/design-notes.md`.
+- The HetGP from ADR 0006 sees `boundary_violation` trials but not `error_escalated` trials. The human-in-the-loop's classification of escalated trials may add boundary-violation data points after the fact.
+- Default values (N retries = 2; circuit-breaker consecutive errors = ~5; circuit-breaker time-without-success T = ~30 minutes; retry backoff schedule) are implementation-time choices documented in `docs/design-notes.md` when chosen — not committed by this ADR.
+- Implementation-mechanism details (`SIGTERM` grace period, partial-event-stream recovery, workspace cleanup on abort, exact preservation layout) defer to design-notes per the established sub-decision-deferral pattern.

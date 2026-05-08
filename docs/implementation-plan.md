@@ -235,7 +235,7 @@ In-flight design spikes — tracked here so they don't get forgotten and so phas
 
 | ADR | Question | Target phase | Status |
 | --- | --- | --- | --- |
-| [0007](adrs/0007-pi-invocation-lifecycle.md) | Error vs. boundary classification, retry policy, failed-trial metrics representation | 3.4 | Proposed; not yet started |
+| *(none open)* | | | |
 
 When a spike closes, remove its row from this table; the ADR file remains as the durable record of the decision (or non-decision).
 
