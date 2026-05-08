@@ -53,3 +53,18 @@ run = "mise run build"
 [tasks.build-python]
 dir = "python"
 run = "mise run build"
+
+[tasks."docs:build"]
+description = "Render docs to PDF in docs/gen/ via pandoc + mermaid-filter"
+run = """
+mkdir -p docs/gen
+pandoc docs/architecture/ARCHITECTURE.md \
+  --standalone \
+  --filter mermaid-filter \
+  --css=https://b.enjam.info/panam/styling.css \
+  --pdf-engine=weasyprint \
+  -o docs/gen/ARCHITECTURE.pdf
+"""
+
+[tools]
+pandoc = "latest"
