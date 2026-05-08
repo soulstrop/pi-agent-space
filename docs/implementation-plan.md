@@ -235,7 +235,6 @@ In-flight design spikes — tracked here so they don't get forgotten and so phas
 
 | ADR | Question | Target phase | Status |
 | --- | --- | --- | --- |
-| [0005](adrs/0005-trial-cost-and-budget.md) | Cost-tracking unit, per-trial cost cap, project-level budget | 3.3 / 3.4 | Proposed; not yet started |
 | [0006](adrs/0006-reproducibility-under-stochastic-agents.md) | Variance suppression vs. replication vs. modelled noise | 3.4 / 6.2 | Proposed; not yet started |
 | [0007](adrs/0007-pi-invocation-lifecycle.md) | Per-trial timeout, signal handling, partial-trial recording, retry | 3.4 | Proposed; not yet started |
 
