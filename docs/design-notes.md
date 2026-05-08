@@ -62,6 +62,8 @@ The two methods mirror Bockeler's computational/inferential split (see `docs/ter
 
 ### Candidate identity: skills order is significant
 
+> **Superseded** by *Skills are an unordered set* (below). Pi 0.74 confirmed `--tools` is order-insensitive; the conservative guess captured here did not survive contact with Pi.
+
 **Where:** `python/src/pi_evaluator/domain/identity.py`.
 
 **Decision:** The candidate-identity hash treats `skills` list order as significant; reordering the list produces a different hash.
@@ -127,3 +129,51 @@ The Phase 1 plan referred to skills generically (`["lint", "format"]`), which ma
 A future broader notion of "skill" — e.g., a higher-level capability composed of multiple Pi tools and a snippet of system prompt — would need a different field name (`capabilities`?) or a translation layer. Today the term and the data are unified.
 
 **Related:** Pi local docs at `~/.local/share/mise/installs/pi/<version>/index.md`; Phase 3.1 in `docs/implementation-plan.md`.
+
+---
+
+### Skills are an unordered set (supersedes earlier note)
+
+**Where:** `python/src/pi_evaluator/domain/identity.py`; `python/src/pi_evaluator/domain/types.py` (`Package.skills`).
+
+**Decision:** `Package.skills` is set-valued at the semantic level. The candidate-identity hash sorts the list before hashing, so `["read", "bash"]` and `["bash", "read"]` produce the same identity.
+
+**Supersedes** the earlier note "Candidate identity: skills order is significant." The earlier note was a conservative guess made before Phase 2 closeout's checkpoint review; verifying against Pi 0.74 showed `--tools` is order-insensitive — every skill in the list is registered for execution and ordering does not affect what Pi runs. Treating order as significant would have wasted the optimizer's budget proposing `[read, bash]` and `[bash, read]` as distinct candidates that Pi runs identically.
+
+The field type stays `list[str]` (not `set[str]`) so JSON serialization in `config.json` and the events stream stays stable and ordered. The semantic-vs-storage split is captured in `_canonicalize_package` in `identity.py`.
+
+If a future skill mechanism introduces a higher-level "capability pipeline" where order *is* load-bearing, that's a different field with a different type — don't repurpose `skills`.
+
+**Related:** `python/tests/test_identity.py::test_reordered_skills_hash_equal`; commit `1f1b4c4`.
+
+---
+
+### Trial outcome classifier: v1 rule
+
+**Where:** `python/src/pi_evaluator/trial_runner.py` (`_classify_outcome`, `_has_model_error`).
+
+**Decision:** A trial is `error_escalated` if **any** problem's `RawTelemetry` shows either (a) a non-zero subprocess exit code, or (b) an assistant `message_end` event with `stopReason == "error"`. Otherwise the trial is `completed`. `boundary_violation` is unreachable in Phase 2 closeout — it lights up when Phase 3.4 lands subprocess timeouts and cost-cap enforcement.
+
+The acceptance test on a Pi run with an expired API key is the motivating case: Pi exits 0 (it ran cleanly), but every assistant `message_end` carries `stopReason: "error"` from the provider's rejected request. Without rule (b), the trial would close as `completed` with zero metrics — a silent degradation that ADR 0007 explicitly rules out.
+
+The classifier deliberately does not flag empty event streams or zero `totalTokens` as errors: a zero-token completed run is just a vacuous success and the surrogate sees it as such (low quality, low cost). The classifier flags only signals that say *something failed*.
+
+Phase 3.4 grows the rule with `boundary_violation` triggers (subprocess `TimeoutExpired`, `per_trial_cost_cap_usd` breach, `per_run_cost_cap_usd` breach) and wires the adapter-layer retry budget around it (`error_escalated` only after retries exhaust).
+
+**Related:** [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md); `python/tests/test_trial_runner.py::test_run_trial_classifies_*`; commit `61fc31e`.
+
+---
+
+### Tempdir cleanup deferred to OS reaping
+
+**Where:** `python/src/pi_evaluator/adapters/workspace.py`.
+
+**Decision:** `materialize_workspace` calls `tempfile.mkdtemp` and never explicitly cleans up. v1 trusts the OS — `systemd-tmpfiles` (or equivalent) — to reap stale tmpdirs.
+
+The interaction with ADR 0007's preservation requirement is the reason we *don't* add a try/finally cleanup: when a trial closes as `error_escalated`, the materialized workspace MUST outlive the trial so a human can inspect what Pi was doing when it failed. A naive cleanup hook in the adapter would delete exactly the evidence we need.
+
+Phase 3.4 will need to make this explicit: cleanup on `completed` (and possibly `boundary_violation`) outcomes, preserve on `error_escalated`. That decision is paired with the persistent-error preservation queue, so it lands together rather than piecemeal.
+
+If multi-trial runs at Phase 4 cadence reveal a real leak (disk pressure, inode exhaustion), revisit immediately — that is one of ADR 0004's reconsider triggers.
+
+**Related:** [ADR 0004 — Workspace Isolation Strategy](adrs/0004-workspace-isolation.md); [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md).
