@@ -56,10 +56,13 @@ class CliSubprocessAdapter(AgentHarnessPort):
             _run_validation_step(step, materialized)
             for step in problem.validation_steps
         ]
+        events, malformed_lines = _parse_event_stream(proc.stdout)
         return RawTelemetry(
-            events=_parse_event_stream(proc.stdout),
+            events=events,
             exit_code=proc.returncode,
             validation_results=validation_results,
+            stderr=proc.stderr,
+            malformed_lines=malformed_lines,
         )
 
 
@@ -81,8 +84,15 @@ def _run_validation_step(step: ValidationStep, workspace: Path) -> ValidationRes
     )
 
 
-def _parse_event_stream(stdout: str) -> list[dict]:
+def _parse_event_stream(stdout: str) -> tuple[list[dict], list[str]]:
+    """Split Pi's stdout into parsed events and preserved malformed lines.
+
+    Pi's ``--mode json`` is line-delimited JSON, but warnings or
+    non-JSON noise can intermix. Lines that fail to parse are kept
+    verbatim so lifecycle classification can flag a malformed run.
+    """
     events: list[dict] = []
+    malformed: list[str] = []
     for raw in stdout.splitlines():
         line = raw.strip()
         if not line:
@@ -90,7 +100,5 @@ def _parse_event_stream(stdout: str) -> list[dict]:
         try:
             events.append(json.loads(line))
         except json.JSONDecodeError:
-            # Pi may emit non-JSON lines (warnings, error messages on
-            # missing API keys, etc.); skip rather than fail.
-            continue
-    return events
+            malformed.append(line)
+    return events, malformed

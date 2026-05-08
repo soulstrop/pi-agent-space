@@ -46,11 +46,18 @@ class RawTelemetry:
     agent finishes. ``validation_results`` defaults to an empty list
     so Phase 1 stubs and tests continue to work without explicit
     validation.
+
+    ``stderr`` and ``malformed_lines`` carry failure signals that ADR
+    0007 lifecycle classification needs: stderr surfaces Pi launch /
+    crash messages; malformed_lines preserves stdout lines that failed
+    JSON parsing so they are not silently dropped by the adapter.
     """
 
     events: list[dict]
     exit_code: int
     validation_results: list[ValidationResult] = field(default_factory=list)
+    stderr: str = ""
+    malformed_lines: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

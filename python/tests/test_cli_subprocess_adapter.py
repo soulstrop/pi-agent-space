@@ -16,6 +16,7 @@ def _make_mock_pi(
     tmp_path: Path,
     *,
     stdout_lines: list[str] | None = None,
+    stderr_text: str = "",
     exit_code: int = 0,
     log_invocation: Path | None = None,
 ) -> str:
@@ -32,6 +33,8 @@ def _make_mock_pi(
         parts.append("    json.dump({'argv': sys.argv, 'cwd': os.getcwd()}, f)")
     for line in stdout_lines or []:
         parts.append(f"print({line!r}, flush=True)")
+    if stderr_text:
+        parts.append(f"sys.stderr.write({stderr_text!r})")
     parts.append(f"sys.exit({exit_code})")
     script.write_text("\n".join(parts) + "\n")
     script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -104,7 +107,7 @@ def test_captures_nonzero_exit_code(tmp_path):
     assert result.exit_code == 42
 
 
-def test_skips_non_json_lines(tmp_path):
+def test_preserves_non_json_lines_as_malformed(tmp_path):
     src = _src_workspace(tmp_path)
     pi = _make_mock_pi(
         tmp_path,
@@ -117,6 +120,21 @@ def test_skips_non_json_lines(tmp_path):
     adapter = CliSubprocessAdapter(pi_binary=pi)
     result = adapter.run(_package(), _problem(src), workspace=str(src))
     assert [e["type"] for e in result.events] == ["session", "agent_end"]
+    assert result.malformed_lines == ["No API key found for google."]
+
+
+def test_captures_stderr(tmp_path):
+    src = _src_workspace(tmp_path)
+    pi = _make_mock_pi(
+        tmp_path,
+        stdout_lines=[],
+        stderr_text="pi: failed to launch provider\n",
+        exit_code=1,
+    )
+    adapter = CliSubprocessAdapter(pi_binary=pi)
+    result = adapter.run(_package(), _problem(src), workspace=str(src))
+    assert "failed to launch provider" in result.stderr
+    assert result.exit_code == 1
 
 
 def test_passes_expected_flags_in_argv(tmp_path):
