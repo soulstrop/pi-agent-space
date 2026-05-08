@@ -13,3 +13,7 @@ __pycache__/
 *.out
 *.fls
 *.fdb_latexmk
+
+# Generated docs
+docs/gen/
+mermaid-filter.err

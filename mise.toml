@@ -68,3 +68,4 @@ pandoc docs/architecture/ARCHITECTURE.md \
 
 [tools]
 pandoc = "latest"
+"pipx:weasyprint" = "latest"
