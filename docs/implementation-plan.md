@@ -47,9 +47,9 @@ The orchestrator is `TrialRunner`, which composes these ports to execute one tri
 
 - The Pi invocation pattern is fixed: `pi --print --no-session --mode json --model <provider/id> --system-prompt <text> --tools <csv> "<prompt>"`. Recorded in `docs/design-notes.md`. Phase 6 featurization assumes this shape.
 - `package.skills` values are passed verbatim to Pi's `--tools` flag. Slot-space schemas in Phase 3.1 must enumerate valid Pi tool names (built-ins: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) and decide how to handle extension-installed tools.
-- Pi's `usage` field carries both `totalTokens` and a per-call `cost` in dollars. v1 only surfaces `tokens_consumed`; the **cost-unit decision** (tokens, dollars, or separate axes) lands in ADR 0005 and shapes Phase 4's `mean_cost` axis and Phase 6's surrogate.
-- `subprocess.run` with no timeout is the v1 invocation. Real Pi runs can be minutes long or hang. Per-trial timeout / abort / cleanup policy lands in ADR 0007; Phase 3.4 (optimizer driver) surfaces it because unattended multi-trial runs make the policy load-bearing.
-- LLM outputs are non-deterministic. Two trials of the same `(package, problem)` will produce different telemetry. ADR 0006 covers the reproducibility/replication policy — informs whether Phase 3 runs each config once or N times, and how the Phase 6 surrogate models (config, problem) → metrics noise.
+- Pi's `usage` field carries both `totalTokens` and a per-call `cost` in dollars. v1 surfaces only `tokens_consumed` so far; **ADR 0005 commits to tracking both as separate Pareto axes**. `Metrics` extends with `cost_dollars: float`; `SyntheticSuiteScorer` extracts `usage.cost.total` alongside `totalTokens`. Phase 4's frontier becomes 4D (tokens, dollars, scaling slope, quality), 5D once subjective lands. The optimizer driver gains `per_trial_cost_cap_usd` and `per_run_cost_cap_usd` parameters (defaults `None`); enforcement is a watchdog with two thresholds (warning + hard stop), mechanism deferred to design-notes when implemented.
+- `subprocess.run` with no timeout is the v1 invocation. **ADR 0007 commits to:** A2 source-of-kill classification (timeouts count as boundary violations); B1 adapter-layer retries with default `N=2` against the same materialized workspace; persistent errors **preserve the trial's workspace + telemetry + stderr on disk** and queue for asynchronous human classification (no auto-re-propose by the driver); a circuit breaker on the driver halts the run when consecutive errored trials exceed a threshold OR wall-clock without a completed trial exceeds T. New trial event phases land: `error_retry`, `error_escalated`, `boundary_violation`. The `finalized` event payload gains an `outcome: "completed" | "boundary_violation" | "error_escalated"` field.
+- LLM outputs are non-deterministic. **ADR 0006 commits to** a heteroscedastic GP single-shot default; switchable fixed-N replicates opt-in per deployment scenario (R&D synthetic and individual default to `replicates=1`; enterprise A/B configures `replicates ≥ 3`). The HetGP needs ~10–20 samples to fit reliably — below the **bootstrap threshold** (default 10) acquisition uses pure exploration without weighting the surrogate's mean. The HetGP sees `boundary_violation` trials as data points (negative signal teaching the cost cliff) but does **not** see `error_escalated` trials until a human classifies them.
 - `GraduatedProblemSetAdapter` loads every `problem.json` in its base dir. Once Phase 4.1 lands 002+ problems, the Phase 2.5 and any future single-problem acceptance tests will iterate the whole suite on real Pi — slow and costly. The adapter (or its callers) needs a `problem_ids: list[str] | None` filter or a tmpdir-copied subset before 002 lands.
 
 ---
@@ -97,7 +97,7 @@ Steps 1.1 and 1.2 can begin in parallel. After 1.1, steps 1.3, 1.4, 1.5, 1.6 are
 
 **Steps.**
 
-- **2.1 Workspace materialization helper.** *Independent.* Copy `GraduatedProblem.workspace_dir` into a temp directory the trial can mutate; return the temp path. v1 isolation strategy: tmpdir copy. (Workspace isolation gets a future ADR; this is the placeholder.) **Per Phase 1's contract,** materialization is invoked by the harness adapter, not by `TrialRunner` — the runner continues to pass `problem.workspace_dir` through unchanged.
+- **2.1 Workspace materialization helper.** *Independent.* Copy `GraduatedProblem.workspace_dir` into a temp directory the trial can mutate; return the temp path. **v1 isolation strategy: tmpdir copy per ADR 0004.** Per Phase 1's contract, materialization is invoked by the harness adapter, not by `TrialRunner` — the runner continues to pass `problem.workspace_dir` through unchanged.
 
 - **2.2 CliSubprocessAdapter.** *Depends on 2.1.* Spawn Pi as a subprocess against the materialized workspace, with the package's prompt/system-prompt/template-values surfaced via Pi's CLI flags or a generated `pi.json`. The adapter calls the workspace helper from 2.1 internally before spawning Pi. Capture Pi's stdout event stream and exit code into `RawTelemetry`. TDD: a fixture mocking Pi (a tiny script standing in) verifies the adapter parses the event stream and returns the expected `RawTelemetry`.
 
@@ -110,7 +110,7 @@ Steps 1.1 and 1.2 can begin in parallel. After 1.1, steps 1.3, 1.4, 1.5, 1.6 are
 **Interface-review checkpoint.** Before Phase 3:
 - Is `RawTelemetry` a stable shape across Pi versions, or does drift in Pi's CLI/event-stream surface require versioning?
 - Does the adapter cleanly handle Pi failures (timeout, crash, malformed events)?
-- Is workspace materialization durable enough as a placeholder, or does Phase 3's multi-trial cadence force the isolation ADR sooner?
+- Are any of ADR 0004's reconsider triggers (concurrent trials, untrusted problems, observed resource leaks) firing under Phase 3's multi-trial cadence? If yes, draft a successor ADR before depending on tmpdir-copy semantics that may be about to change.
 - Did the package configuration shape survive contact with Pi's actual CLI surface?
 
 ---
@@ -127,11 +127,18 @@ Steps 1.1 and 1.2 can begin in parallel. After 1.1, steps 1.3, 1.4, 1.5, 1.6 are
 
 - **3.2 RandomFromSlotSpace proposer.** *Depends on 3.1.* `propose(history) -> Package` as uniform random over the declared space, excluding configurations already evaluated (by candidate-identity from 1.2). TDD: with mocked history, proposer skips already-evaluated identities; without history, samples freely.
 
-- **3.3 Pareto frontier (2D).** *Independent.* Compute the Pareto frontier over `(mean_cost, mean_quality)` from a list of trials. **Cost-unit choice (tokens vs dollars) per ADR 0005** — pin the unit before this lands. TDD: hand-verified frontier members on a known trial set.
+- **3.3 Pareto frontier (3D).** *Independent.* Compute the Pareto frontier over `(mean_tokens, mean_dollars, mean_quality)` from a list of trials. **Both cost axes per ADR 0005** — tokens and dollars are kept separate because token-cheap can be dollar-expensive and vice versa. TDD: hand-verified frontier members on a known trial set, including a config that dominates on tokens but loses on dollars (and vice versa).
 
-- **3.4 Optimizer driver.** *Depends on 3.2, 3.3, Phase 2.* Loop: load history → propose → run trial → persist → recompute frontier. Bounded by a trial budget. **Per-trial timeout / abort policy per ADR 0007** — unattended multi-trial runs need it. **Cost cap policy per ADR 0005.** TDD: with a stub harness that returns deterministic metrics by config, the driver produces the expected frontier within budget.
+- **3.4 Optimizer driver.** *Depends on 3.2, 3.3, Phase 2.* Loop: load history → propose → run trial → persist → recompute frontier. Bounded by a trial budget and by the cost caps below. The driver gains the following configuration parameters with non-disruptive defaults:
+    - `per_trial_cost_cap_usd: float | None = None` and `per_run_cost_cap_usd: float | None = None` (ADR 0005); enforcement watchdog with warning + hard-stop thresholds.
+    - `replicates: int = 1` (ADR 0006); `>1` triggers fixed-N replication of `(package, problem)` pairs.
+    - `bootstrap_threshold: int = 10` (ADR 0006); below this trial count, acquisition uses pure exploration; above, transitions to GP-driven.
+    - `max_consecutive_errors: int` and `max_time_without_completed_trial: timedelta` (ADR 0007); circuit-breaker thresholds that halt the run gracefully.
+    - Adapter-layer retry budget for transient errors (`N=2` default, ADR 0007); persistent errors preserve the trial directory and tag the trial `error_escalated` for asynchronous human classification — the driver does not auto-re-propose.
 
-- **3.5 Acceptance test.** *Depends on 3.4.* Run the optimizer against the real Pi for a small budget (~4–6 trials) over the slot space; assert all trials persist and a frontier file is generated. **Filter `GraduatedProblemSetAdapter` to a fixed problem-ID list** so the test is stable when 002+ land.
+  TDD: with a stub harness returning deterministic metrics by config, the driver produces the expected frontier within budget; cost caps trigger boundary-violation trials with `quality_score=0` and real `cost_dollars`; the circuit breaker halts the run when its thresholds are crossed; persistent errors land in the preservation queue without progressing as fresh trials.
+
+- **3.5 Acceptance test.** *Depends on 3.4.* Run the optimizer against the real Pi for a small budget (~4–6 trials) over the slot space; assert all trials persist and a frontier file is generated. **This is a driver-mechanics test, not a meaningful surrogate-quality test** — per ADR 0006, fewer than ~10 trials sit below the bootstrap threshold, so the optimizer behaves like random search. Filter `GraduatedProblemSetAdapter` to a fixed problem-ID list so the test is stable when 002+ land.
 
 Steps 3.1 and 3.3 can begin in parallel.
 
@@ -152,11 +159,11 @@ Steps 3.1 and 3.3 can begin in parallel.
 
 - **4.1 Multi-difficulty suite.** *Independent.* Add at least two more graduated problems at higher difficulty (e.g., `002_*` at difficulty 2, `003_*` at difficulty 3). TDD: suite loader yields all problems, sorted/groupable by difficulty. **Update Phase 2.5 and Phase 3.5 acceptance tests to filter to a stable single-problem subset** so they don't iterate the whole suite on every real-Pi run.
 
-- **4.2 Per-(problem, metric) events.** *Depends on Phase 2 ScoringPort.* Each trial's `events.jsonl` records one event per (problem, metric) pair, not aggregated. TDD: a multi-problem trial writes events for every problem.
+- **4.2 Per-(problem, metric) events.** *Depends on Phase 2 ScoringPort.* Each trial's `events.jsonl` records one event per `(problem, metric)` pair, not aggregated. **Per-pair payload carries `(value, n_samples)` per ADR 0006** — `n_samples=1` under the single-shot default, `n_samples > 1` only when `replicates > 1`. Cost is two values per trial (`tokens`, `dollars`) per ADR 0005. The lifecycle event phases from ADR 0007 (`error_retry`, `error_escalated`, `boundary_violation`) ride alongside the per-(problem, metric) events. TDD: a multi-problem trial writes events for every problem; `replicates > 1` runs accumulate matching `n_samples`; a boundary-violated trial emits the matching lifecycle phase.
 
-- **4.3 Capability-profile aggregation.** *Depends on 4.2.* Lazy aggregation: take a trial's per-problem events and compute `(mean, p95, scaling_slope)` for each metric. Scaling slope = regression of `log(metric)` vs `difficulty`. TDD: known per-difficulty arrays produce hand-verified summaries.
+- **4.3 Capability-profile aggregation.** *Depends on 4.2.* Lazy aggregation: take a trial's per-problem events and compute `(mean, variance, p95, n_samples, scaling_slope)` for each metric. Variance and `n_samples` per ADR 0006 — they ride along even under the single-shot default (variance = 0, n_samples = 1) so the surrogate's heteroscedastic noise model has data to fit when `replicates > 1` enters. Scaling slope = regression of `log(metric)` vs `difficulty`. TDD: known per-difficulty arrays produce hand-verified summaries; replicated runs aggregate correctly across replicates and across difficulty levels.
 
-- **4.4 Pareto frontier (3D).** *Depends on 4.3.* Extend Pareto computation to `(mean_cost, scaling_slope, mean_quality)`. The cost axis uses the unit chosen in ADR 0005; if both tokens and dollars are tracked separately, this becomes a 4D frontier. TDD: a synthetic trial set demonstrates that a high-slope cheap configuration is not dominated by a low-slope moderate one.
+- **4.4 Pareto frontier (4D).** *Depends on 4.3.* Extend Pareto computation to `(mean_tokens, mean_dollars, scaling_slope, mean_quality)` per ADR 0005. With Phase 5's subjective scoring, the frontier becomes 5D. TDD: a synthetic trial set demonstrates that a high-slope cheap configuration is not dominated by a low-slope moderate one; a token-cheap-but-dollar-expensive configuration sits on the frontier alongside its mirror.
 
 - **4.5 Acceptance test.** *Depends on 4.4.* Construct a configuration we know will scale poorly (e.g., a small model that fails on hard problems); confirm `scaling_slope` captures it and the frontier ranks accordingly.
 
@@ -178,7 +185,7 @@ Steps 3.1 and 3.3 can begin in parallel.
 
 - **5.1 Subjective-score event schema.** *Independent.* Define the event shape (trial id, score, optional notes, timestamp, scorer identity). TDD: serialization round-trip.
 
-- **5.2 Append-and-finalize.** *Depends on 5.1.* Phase 1's `PersistencePort.finalize_trial(trial_id, final_metrics, subjective_score=None)` closes a trial in one shot at objective-scoring time. Phase 5 adds either a new port method `update_subjective_score(trial_id, score)` or explicit re-finalize semantics — pick during 5.2 RFD. The CLI appends a subjective-score event to `events.jsonl` and atomically rewrites `final.json` (write-temp + rename, matching the existing pattern). TDD: concurrent append safety; idempotent re-application; no recomputation of objective metrics on subjective updates.
+- **5.2 Append-and-finalize.** *Depends on 5.1.* Phase 1's `PersistencePort.finalize_trial(trial_id, final_metrics, subjective_score=None)` closes a trial in one shot at objective-scoring time. Phase 5 adds either a new port method `update_subjective_score(trial_id, score)` or explicit re-finalize semantics — pick during 5.2 RFD. The CLI appends a subjective-score event to `events.jsonl` and atomically rewrites `final.json` (write-temp + rename, matching the existing pattern). **Subjective scoring applies only to trials whose `outcome` is `"completed"` (ADR 0007)** — boundary-violated and error-escalated trials don't receive subjective scores; the CLI rejects attempts to score them. TDD: concurrent append safety; idempotent re-application; no recomputation of objective metrics on subjective updates; rejection of subjective-score attempts on non-completed trials.
 
 - **5.3 Partial-score policy.** *Depends on Phase 4.* Optimizer reads a partial trial as having `subjective = None`. Define an explicit policy: missing subjective is excluded from any axis that depends on it (rather than imputed). TDD: a history mix produces a Pareto frontier that includes partially-scored trials in axes that don't require subjective.
 
@@ -199,13 +206,13 @@ Steps 3.1 and 3.3 can begin in parallel.
 
 **Steps.**
 
-- **6.1 Featurize Package.** *Independent.* Map a `Package` to a feature vector suitable for the surrogate. **Featurization piggy-backs on the Phase 3.1 slot/value schema** rather than treating Package as raw text — provider/id strings, free-text system prompts, and arbitrary skills lists are too high-dimensional otherwise. TDD: identical packages yield identical features; semantically distinct packages yield distinct features.
+- **6.1 Featurize Package.** *Independent.* Map a `Package` to a feature vector suitable for the surrogate. **Featurization piggy-backs on the Phase 3.1 slot/value schema** rather than treating Package as raw text — provider/id strings, free-text system prompts, and arbitrary skills lists are too high-dimensional otherwise. The surrogate's *output* space is the Phase 4.4 Pareto axes: `(mean_tokens, mean_dollars, scaling_slope, mean_quality)`, plus subjective once Phase 5 lands. TDD: identical packages yield identical features; semantically distinct packages yield distinct features.
 
-- **6.2 Surrogate model.** *Depends on 6.1.* Start with a simple Gaussian Process over the feature vector predicting `(mean_cost, mean_quality, scaling_slope)`. TDD: trained on a known function, the surrogate predicts within tolerance on held-out points.
+- **6.2 Surrogate model.** *Depends on 6.1.* **Heteroscedastic Gaussian Process per ADR 0006** — `HeteroskedasticSingleTaskGP` from BoTorch (or equivalent) over the feature vector predicting the 4D output (5D with subjective). The HetGP models input-dependent variance; the trial event stream's `(value, n_samples)` payloads from Phase 4.2 feed the noise model. **Bootstrap discipline** per ADR 0006: below ~10 trials the surrogate is unreliable, so acquisition (Step 6.3) ignores its mean estimate. TDD: trained on a known function, the surrogate predicts within tolerance on held-out points and reports calibrated variance estimates; bootstrap behavior under sparse training data matches spec.
 
-- **6.3 Acquisition function.** *Depends on 6.2.* Expected hypervolume improvement over the Pareto frontier (or simpler scalarized expected-improvement at first). TDD: on a synthetic problem with a known optimum, the acquisition function selects points biased toward the optimum.
+- **6.3 Acquisition function.** *Depends on 6.2.* Expected hypervolume improvement over the Pareto frontier (or simpler scalarized expected-improvement at first). **Below the bootstrap threshold (ADR 0006), acquisition uses pure exploration** (Latin-hypercube or uniform random sampling within the slot space) instead of GP-driven proposals. Above the threshold, the standard EHVI path takes over. TDD: on a synthetic problem with a known optimum, the acquisition function selects points biased toward the optimum once past the bootstrap threshold; below the threshold, samples are uniformly distributed.
 
-- **6.4 SurrogateProposer.** *Depends on 6.3.* Replace `RandomFromSlotSpace` as the default proposer. TDD: on a synthetic problem, the surrogate-driven optimizer reaches a target Pareto frontier in fewer trials than random.
+- **6.4 SurrogateProposer.** *Depends on 6.3.* Replace `RandomFromSlotSpace` as the default proposer. TDD: on a synthetic problem, the surrogate-driven optimizer reaches a target Pareto frontier in fewer trials than random *once past the bootstrap threshold* (the comparison below the threshold is meaningless since both are exploration).
 
 - **6.5 Acceptance test.** *Depends on 6.4.* End-to-end with real Pi, fixed budget; verify the optimizer's recommendations are stable across reruns and respect previously-evaluated identities.
 
@@ -217,12 +224,12 @@ Steps 3.1 and 3.3 can begin in parallel.
 
 Per the deployment-scenarios memory and the existing ADR backlog:
 
-- **Workspace isolation strategy.** v1 uses tmpdir copy; future ADR.
+- **Stricter workspace isolation (containers, namespace sandboxes).** v1 uses tmpdir copy per ADR 0004 (Accepted). Stricter isolation is gated on the reconsider triggers documented there: concurrent trials, untrusted problems, enterprise A/B, observed resource leaks, reproducibility-under-non-determinism.
 - **Live-session sidecar adapter (individual scenario).** Future port adapter.
 - **Fleet telemetry adapter (enterprise A/B).** Future port adapter.
 - **SQL persistence backend.** Per ADR 0003 reconsider triggers.
 - **Non-coding `GraduatedProblem` schemas.** Placeholder ADR pending.
-- **Pareto-vector vs. scalarized quality.** Placeholder ADR pending; v1 uses 3D `(mean_cost, scaling_slope, mean_quality)`.
+- **Pareto-vector vs. scalarized quality.** Placeholder ADR pending; v1 uses 4D `(mean_tokens, mean_dollars, scaling_slope, mean_quality)` per ADR 0005, becoming 5D when subjective lands.
 - **Multi-task GP / graph-kernel / GNN surrogates.** Phase 6 uses simple GP; richer surrogates land in v2.
 - **Subjective-score elicitation UX.** Phase 5 ships a CLI; richer surfaces (IDE plugin, web form) belong to the individual-scenario adapter.
 - **Explicit packaging surface (`__init__.py`, public re-exports).** Today the `pi_evaluator` tree relies on PEP 420 namespace packages — no `__init__.py` files exist and tests/imports resolve cleanly. Revisit when the `dev` and `deploy` mise tasks materialize: packaging the library for deployment to the Pi runtime may force explicit `__init__.py` files for build tools, runtime import-time validation, or a curated public surface (`from pi_evaluator import TrialRunner`).
