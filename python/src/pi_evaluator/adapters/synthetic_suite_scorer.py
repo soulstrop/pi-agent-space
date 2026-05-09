@@ -16,6 +16,10 @@ class SyntheticSuiteScorer(ScoringPort):
 
     - ``tokens_consumed``: sum of ``usage.totalTokens`` over every
       assistant ``message_end`` event in the telemetry stream.
+    - ``cost_dollars``: sum of ``usage.cost.total`` over the same
+      events. Per ADR 0005, tokens and dollars are tracked as
+      independent axes — token-cheap models can be dollar-expensive
+      across providers.
     - ``validation_pass_rate``: fraction of ValidationResults marked
       ``passed``; 0.0 when there are no validation results (no signal
       of success).
@@ -27,26 +31,41 @@ class SyntheticSuiteScorer(ScoringPort):
     """
 
     def score_objective(self, telemetry: RawTelemetry) -> Metrics:
+        pass_rate = _validation_pass_rate(telemetry)
         return Metrics(
             tokens_consumed=_sum_assistant_tokens(telemetry.events),
-            validation_pass_rate=_validation_pass_rate(telemetry),
-            quality_score=_validation_pass_rate(telemetry) * 1.0,
+            cost_dollars=_sum_assistant_cost(telemetry.events),
+            validation_pass_rate=pass_rate,
+            quality_score=pass_rate * 1.0,
         )
 
     def score_subjective(self, trial: Trial) -> SubjectiveScore | None:
         return None
 
 
+def _assistant_message_ends(events: list[dict]) -> list[dict]:
+    return [
+        event.get("message") or {}
+        for event in events
+        if event.get("type") == "message_end"
+        and (event.get("message") or {}).get("role") == "assistant"
+    ]
+
+
 def _sum_assistant_tokens(events: list[dict]) -> int:
     total = 0
-    for event in events:
-        if event.get("type") != "message_end":
-            continue
-        message = event.get("message") or {}
-        if message.get("role") != "assistant":
-            continue
+    for message in _assistant_message_ends(events):
         usage = message.get("usage") or {}
         total += int(usage.get("totalTokens", 0))
+    return total
+
+
+def _sum_assistant_cost(events: list[dict]) -> float:
+    total = 0.0
+    for message in _assistant_message_ends(events):
+        usage = message.get("usage") or {}
+        cost = usage.get("cost") or {}
+        total += float(cost.get("total", 0))
     return total
 
 

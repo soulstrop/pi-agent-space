@@ -99,6 +99,7 @@ class TrialRunner:
                     payload={
                         "problem_id": problem.id,
                         "tokens_consumed": metrics.tokens_consumed,
+                        "cost_dollars": metrics.cost_dollars,
                         "validation_pass_rate": metrics.validation_pass_rate,
                         "quality_score": metrics.quality_score,
                     },
@@ -116,6 +117,7 @@ class TrialRunner:
                 timestamp=self._clock(),
                 payload={
                     "tokens_consumed": final_metrics.tokens_consumed,
+                    "cost_dollars": final_metrics.cost_dollars,
                     "validation_pass_rate": final_metrics.validation_pass_rate,
                     "quality_score": final_metrics.quality_score,
                     "outcome": outcome,
@@ -133,10 +135,16 @@ class TrialRunner:
 
 def _aggregate(metrics: list[Metrics]) -> Metrics:
     if not metrics:
-        return Metrics(tokens_consumed=0, validation_pass_rate=0.0, quality_score=0.0)
+        return Metrics(
+            tokens_consumed=0,
+            cost_dollars=0.0,
+            validation_pass_rate=0.0,
+            quality_score=0.0,
+        )
     n = len(metrics)
     return Metrics(
         tokens_consumed=sum(m.tokens_consumed for m in metrics),
+        cost_dollars=sum(m.cost_dollars for m in metrics),
         validation_pass_rate=sum(m.validation_pass_rate for m in metrics) / n,
         quality_score=sum(m.quality_score for m in metrics) / n,
     )

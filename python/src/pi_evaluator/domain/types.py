@@ -77,12 +77,19 @@ class RawTelemetry:
 class Metrics:
     """Objective scoring output (Phase 1 scalar shape).
 
+    Per ADR 0005, ``cost_dollars`` rides alongside ``tokens_consumed``
+    as a separate Pareto axis: token-cheap models can be dollar-
+    expensive and vice versa, so collapsing both into one number
+    throws away the operator's ability to optimize under different
+    limiting factors.
+
     Capability-profile / fibered metrics arrive in Phase 4.
     """
 
     tokens_consumed: int
     validation_pass_rate: float
     quality_score: float
+    cost_dollars: float = 0.0
 
 
 @dataclass(frozen=True)

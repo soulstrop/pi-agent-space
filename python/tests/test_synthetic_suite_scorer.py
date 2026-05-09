@@ -95,6 +95,69 @@ def test_tokens_consumed_skips_non_assistant_messages():
     assert metrics.tokens_consumed == 50
 
 
+def test_cost_dollars_sums_assistant_message_end_cost_total():
+    events = [
+        {"type": "session", "id": "s"},
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "usage": {
+                    "totalTokens": 100,
+                    "cost": {
+                        "input": 0.001,
+                        "output": 0.002,
+                        "cacheRead": 0,
+                        "cacheWrite": 0,
+                        "total": 0.003,
+                    },
+                },
+            },
+        },
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "usage": {"totalTokens": 50, "cost": {"total": 0.0015}},
+            },
+        },
+    ]
+    metrics = SyntheticSuiteScorer().score_objective(_telemetry(events=events))
+    assert metrics.cost_dollars == pytest.approx(0.0045)
+
+
+def test_cost_dollars_zero_when_cost_field_missing():
+    events = [
+        {
+            "type": "message_end",
+            "message": {"role": "assistant", "usage": {"totalTokens": 100}},
+        },
+    ]
+    metrics = SyntheticSuiteScorer().score_objective(_telemetry(events=events))
+    assert metrics.cost_dollars == 0.0
+
+
+def test_cost_dollars_skips_non_assistant_messages():
+    events = [
+        {
+            "type": "message_end",
+            "message": {
+                "role": "user",
+                "usage": {"cost": {"total": 0.999}},
+            },
+        },
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "usage": {"cost": {"total": 0.005}},
+            },
+        },
+    ]
+    metrics = SyntheticSuiteScorer().score_objective(_telemetry(events=events))
+    assert metrics.cost_dollars == pytest.approx(0.005)
+
+
 def test_tokens_consumed_handles_missing_usage_gracefully():
     events = [
         {"type": "message_end", "message": {"role": "assistant"}},
