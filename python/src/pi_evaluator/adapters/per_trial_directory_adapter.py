@@ -67,6 +67,19 @@ class PerTrialDirectoryAdapter(PersistencePort):
         tmp.write_text(json.dumps(final, indent=2, sort_keys=True))
         tmp.replace(d / "final.json")
 
+    def save_frontier(self, trial_ids: list[str]) -> None:
+        """Write ``frontier.json`` listing the current non-dominated trial IDs.
+
+        Atomic temp-then-rename so partial writes never produce a
+        truncated file. Called by the optimizer driver after each
+        trial closes (Phase 3.4) so a crashed run leaves the latest
+        frontier on disk.
+        """
+        payload = {"trial_ids": list(trial_ids)}
+        tmp = self._base / "frontier.json.tmp"
+        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        tmp.replace(self._base / "frontier.json")
+
     def load_trials(self) -> list[Trial]:
         trials: list[Trial] = []
         if not self._base.exists():
