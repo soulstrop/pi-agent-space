@@ -6,7 +6,7 @@ This document orients new readers (and LLMs) to the Python implementation. For t
 
 ## Contents
 
-- [Module Map](#module-map)
+- [A Reference Case: Claude Code](#a-reference-case-claude-code)
 - [What pi-agent-space Optimizes](#what-pi-agent-space-optimizes)
 - [Source of Truth and Precursors](#source-of-truth-and-precursors)
 - [Architecture in Layers](#architecture-in-layers)
@@ -18,79 +18,30 @@ This document orients new readers (and LLMs) to the Python implementation. For t
 
 ---
 
-## Module Map
+## A Reference Case: Claude Code
+
+The architecture's value is making *non-standard* compositional structure explicit. Standard hex-architecture concerns (a port plus its adapters, a domain layer with no upward dependencies) are not the interesting part. The interesting part is what the categorical primitives let us compose.
+
+The diagram below is the Claude Code workflow walked through in [`modeling-external-architectures.md`](modeling-external-architectures.md): parallel sub-agents (`Par`), context duplication (`Copy`), result merging (`MergeStrings`), and sequential composition (`Seq` / `>>>`).
 
 ```mermaid
-flowchart TB
-    classDef external fill:#fef3c7,stroke:#92400e,color:#92400e
-    classDef domain fill:#e0f2fe,stroke:#075985,color:#075985
-    classDef port fill:#ede9fe,stroke:#5b21b6,color:#5b21b6
-    classDef adapter fill:#dcfce7,stroke:#166534,color:#166534
-    classDef runner fill:#fde68a,stroke:#92400e,color:#92400e
-    classDef precursor fill:#fce7f3,stroke:#9d174d,color:#9d174d
+flowchart LR
+    classDef morphism fill:#dcfce7,stroke:#166534,color:#166534
+    classDef routing fill:#fde68a,stroke:#92400e,color:#92400e
+    classDef io fill:#e0f2fe,stroke:#075985,color:#075985
 
-    subgraph external [External]
-        Pi[Pi CLI binary<br/><i>builder harness</i>]
-        FS[Filesystem<br/><i>trials/, graduated_problems/</i>]
-    end
-
-    subgraph py [Python implementation - pi_evaluator - source of truth]
-        Runner[TrialRunner<br/><i>orchestrator</i>]:::runner
-
-        subgraph domainBox [Domain - pure data + identity]
-            Types[domain.types<br/>Package, Trial, Outcome,<br/>RawTelemetry, Metrics, ...]:::domain
-            Identity[domain.identity<br/>candidate_identity hash]:::domain
-            TestSuite[domain.test_suite<br/>GraduatedProblem,<br/>ValidationStep]:::domain
-        end
-
-        subgraph portsBox [Ports - Protocol interfaces]
-            AHP[AgentHarnessPort]:::port
-            SP[ScoringPort]:::port
-            PP[PersistencePort]:::port
-            ESP[EvalSuiteSourcePort]:::port
-        end
-
-        subgraph adaptersBox [Adapters]
-            CLI[CliSubprocessAdapter]:::adapter
-            StubH[StubAgentHarnessAdapter]:::adapter
-            SSS[SyntheticSuiteScorer]:::adapter
-            StubS[StubScorer]:::adapter
-            PTD[PerTrialDirectoryAdapter]:::adapter
-            GPS[GraduatedProblemSetAdapter]:::adapter
-            WS[workspace.materialize_workspace<br/><i>helper</i>]:::adapter
-        end
-    end
-
-    Math[docs/math.pdf<br/><i>categorical precursor</i>]:::precursor
-
-    Pi:::external
-    FS:::external
-
-    Runner --> AHP
-    Runner --> SP
-    Runner --> PP
-    Runner --> ESP
-    Runner --> Types
-
-    CLI -. implements .-> AHP
-    StubH -. implements .-> AHP
-    SSS -. implements .-> SP
-    StubS -. implements .-> SP
-    PTD -. implements .-> PP
-    GPS -. implements .-> ESP
-
-    CLI --> WS
-    CLI --> Pi
-    PTD --> FS
-    GPS --> FS
-
-    Identity --> Types
-    TestSuite --> Types
-
-    Math -. informs .-> Types
+    In([Prompt × Context]):::io --> Copy[Copy]:::routing
+    Copy --> Explore[CallModel<br/>Haiku-Explore]:::morphism
+    Copy --> Plan[CallModel<br/>Opus-Plan]:::morphism
+    Explore --> Merge[MergeStrings]:::routing
+    Plan --> Merge
+    Merge --> KAIROS[ApplySkill<br/>KAIROS_Background_Refactor]:::morphism
+    KAIROS --> Undercover[ApplySkill<br/>Strip_CoAuthoredBy_Metadata]:::morphism
+    Undercover --> Tests[RunTests]:::morphism
+    Tests --> Out([TestResult]):::io
 ```
 
-**Reading the diagram.** Solid arrows are runtime calls (`A → B` means *A invokes B*). Dotted **implements** arrows mean an adapter satisfies a port's `Protocol`. Dotted **informs** arrows mean the precursor artifact shaped the implementation's design at some point — they do not mean drift is checked in real time. The Python implementation is canonical.
+The same primitives compose to express feedback loops (`ArrowLoop` — used for the "Dreaming" memory-consolidation routine) and stream tapping (`Copy` + parallel tensor — used for OpenClaw event subscription). The current Haskell DSL precursor type-checks these graphs at compile time; once the Python implementation supports multi-role packages (Phase 5+, ADR 0005), workflows like this become runnable `Package` configurations the optimizer can drive directly.
 
 ---
 
