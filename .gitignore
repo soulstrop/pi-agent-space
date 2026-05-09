@@ -17,3 +17,8 @@ __pycache__/
 # Generated docs
 docs/gen/
 mermaid-filter.err
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
