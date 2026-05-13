@@ -191,3 +191,19 @@ The between-step approach was chosen over a parallel signal-handling watchdog fo
 Single warning fraction (0.8) is a v1 simplification — operators can't tune warning vs. hard-stop independently. If operators ask for asymmetric bands (warn early, halt late) the constant becomes a parameter.
 
 **Related:** [ADR 0005 — Trial Cost and Budget Model](adrs/0005-trial-cost-and-budget.md); [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md); `python/tests/test_trial_runner.py::test_per_trial_cost_cap_*`; `python/tests/test_optimizer_driver.py::test_per_run_cost_cap_*`.
+
+---
+
+### Circuit breaker: boundary_violations are neutral, completed resets, monotonic clock
+
+**Where:** `python/src/pi_evaluator/optimizer_driver.py` (`run` circuit-breaker checks; `monotonic_clock` parameter).
+
+**Decision:** The driver's circuit breaker (ADR 0007) tracks two state machines between trials. (1) A `consecutive_errors` counter that **increments only on `error_escalated`**, **resets only on `completed`**, and is **left unchanged on `boundary_violation`** — a boundary-violated trial neither breaks an error streak nor counts as one. Trips when the counter is `>= max_consecutive_errors`. (2) A `last_completed_at` wall-clock timestamp from a monotonic clock that advances only when a trial finishes with `outcome=="completed"`; trips when `now - last_completed_at` exceeds `max_time_without_completed_trial.total_seconds()`.
+
+The state transitions are driven by Bockeler-style symmetry: `completed` is the *positive* signal that resets both state machines; `error_escalated` is the *operationally suspicious* signal that the breaker exists to catch; `boundary_violation` is a *useful negative signal* (ADR 0006 — the HetGP learns the cost cliff from it) and so does not contribute to "the optimization isn't making progress." A run of pure boundary_violations does not trip the error breaker but will eventually trip the time breaker once `max_time_without_completed_trial` elapses without any `completed` trial — which is the correct behavior.
+
+The driver takes a `monotonic_clock` callable (default `time.monotonic`) so tests can advance the clock deterministically. Wall-clock measurement uses `time.monotonic` rather than `datetime.now()` to be NTP-correction-safe.
+
+The trip-condition order in the loop is: error breaker → time breaker → per-run cost cap. Ordering is observable only in the rare case where two thresholds cross on the same trial; the listed order reports the "earlier-conceptually" reason first (errors are loudest).
+
+**Related:** [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md); `python/tests/test_optimizer_driver.py::test_circuit_breaker_*`.
