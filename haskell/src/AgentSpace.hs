@@ -13,9 +13,16 @@ type Context = [String]
 type Code    = String
 data TestResult = Pass | Fail String deriving (Show, Eq)
 
+-- | Trial metrics. Per ADR 0005, tokens and dollars are independent
+-- axes: token-cheap models can be dollar-expensive across providers,
+-- so the operator's limiting factor varies by deployment. Phase 4.4
+-- extends this with the capability-profile scaling-slope axis; Phase
+-- 5 adds the subjective axis.
 data Metrics = Metrics
-    { tokensConsumed :: Int
-    , qualityScore   :: Float
+    { tokensConsumed     :: Int
+    , costDollars        :: Float
+    , validationPassRate :: Float
+    , qualityScore       :: Float
     } deriving (Show, Eq)
 
 data ModelParams = ModelParams
@@ -44,8 +51,15 @@ data Trial a b = Trial
     }
 
 -- | Pareto frontier over the metric-bearing projection of trial
--- outcomes. Error-escalated trials are dropped before frontier
--- computation since they carry no metric.
+-- outcomes (the @π@ projection of math.pdf eq. 7). Error-escalated
+-- trials are dropped because they carry no metric; completed and
+-- boundary-violated trials are both eligible.
+--
+-- Dominance per ADR 0005 / Phase 3.3 is 3D over @(tokensConsumed,
+-- costDollars, qualityScore)@: trial @a@ dominates trial @b@ when @a@
+-- is at-least-as-good on all three axes and strictly better on at
+-- least one. Costs minimize; quality maximizes. Phase 4.4 lifts this
+-- to 4D once @scalingSlope@ lands.
 paretoFrontier :: [Trial a b] -> [Trial a b]
 paretoFrontier trials =
     [ t | t <- trials, hasMetrics t, not (isDominated t trials) ]
@@ -53,13 +67,22 @@ paretoFrontier trials =
     hasMetrics t = case metricsOf (outcome t) of
         Just _  -> True
         Nothing -> False
-    isDominated t ts = any (\other ->
-        case (metricsOf (outcome other), metricsOf (outcome t)) of
-            (Just mo, Just mt) ->
-                tokensConsumed mo <= tokensConsumed mt &&
-                qualityScore mo >= qualityScore mt &&
-                mo /= mt
-            _ -> False) ts
+    isDominated t ts = any (`dominates` t) ts
+    dominates other t = case (metricsOf (outcome other), metricsOf (outcome t)) of
+        (Just mo, Just mt) -> metricsDominate mo mt
+        _ -> False
+
+metricsDominate :: Metrics -> Metrics -> Bool
+metricsDominate a b = noWorse && strictlyBetter
+  where
+    noWorse =
+        tokensConsumed a <= tokensConsumed b
+        && costDollars   a <= costDollars   b
+        && qualityScore  a >= qualityScore  b
+    strictlyBetter =
+        tokensConsumed a < tokensConsumed b
+        || costDollars   a < costDollars   b
+        || qualityScore  a > qualityScore  b
 
 type History a b = [Trial a b]
 
@@ -88,7 +111,12 @@ predictPerformance (t:_) _ = case metricsOf (outcome t) of
     Just m  -> Right NoisyEstimate { mean = m, variance = zeroVariance }
     Nothing -> Left "Most recent trial has no metrics (error-escalated)"
   where
-    zeroVariance = Metrics { tokensConsumed = 0, qualityScore = 0 }
+    zeroVariance = Metrics
+        { tokensConsumed     = 0
+        , costDollars        = 0
+        , validationPassRate = 0
+        , qualityScore       = 0
+        }
 
 acquireNextConfiguration :: History a b -> AgentGraph Prompt TestResult
 acquireNextConfiguration _ = 

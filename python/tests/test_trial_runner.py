@@ -211,6 +211,210 @@ def test_run_trial_classifies_assistant_stop_reason_error_as_error_escalated(tmp
     assert trial.outcome == "error_escalated"
 
 
+class _PerProblemScorer:
+    """Returns objective metrics from a per-problem queue.
+
+    Lets cost-cap tests drive accumulated cost across problems
+    deterministically without relying on telemetry shape.
+    """
+
+    def __init__(self, metrics: list[Metrics]) -> None:
+        self._queue = list(metrics)
+
+    def score_objective(self, telemetry: RawTelemetry) -> Metrics:
+        return self._queue.pop(0)
+
+    def score_subjective(self, trial) -> SubjectiveScore | None:
+        return None
+
+
+def _per_problem_runner(
+    tmp_path,
+    *,
+    per_problem_metrics: list[Metrics],
+    n_problems: int,
+) -> tuple[TrialRunner, PerTrialDirectoryAdapter]:
+    persistence = PerTrialDirectoryAdapter(tmp_path)
+    runner = TrialRunner(
+        harness=StubAgentHarnessAdapter(),
+        scorer=_PerProblemScorer(per_problem_metrics),
+        persistence=persistence,
+        suite_source=_ListSuiteSource(
+            [_problem(f"p{i + 1}") for i in range(n_problems)]
+        ),
+        clock=_counter_clock(),
+    )
+    return runner, persistence
+
+
+def test_per_trial_cost_cap_none_disables_check(tmp_path):
+    """cap=None → no warning, no boundary, regardless of cost."""
+    runner, _ = _per_problem_runner(
+        tmp_path,
+        per_problem_metrics=[
+            Metrics(
+                tokens_consumed=10,
+                validation_pass_rate=1.0,
+                quality_score=1.0,
+                cost_dollars=100.0,
+            )
+        ],
+        n_problems=1,
+    )
+    trial = runner.run_trial(
+        "t-001",
+        _package(),
+        _suite_ref(),
+        _versions(),
+        per_trial_cost_cap_usd=None,
+    )
+    assert trial.outcome == "completed"
+    phases = [e.phase for e in trial.events]
+    assert "cost_cap_warning" not in phases
+    assert "boundary_violation" not in phases
+
+
+def test_per_trial_cost_cap_emits_warning_event_when_crossed(tmp_path):
+    """Cost between warning fraction × cap and cap → warning, normal close."""
+    runner, _ = _per_problem_runner(
+        tmp_path,
+        per_problem_metrics=[
+            Metrics(
+                tokens_consumed=10,
+                validation_pass_rate=1.0,
+                quality_score=1.0,
+                cost_dollars=0.09,  # > 0.8 * 0.10 but < 0.10
+            )
+        ],
+        n_problems=1,
+    )
+    trial = runner.run_trial(
+        "t-001",
+        _package(),
+        _suite_ref(),
+        _versions(),
+        per_trial_cost_cap_usd=0.10,
+    )
+    assert trial.outcome == "completed"
+    phases = [e.phase for e in trial.events]
+    assert phases.count("cost_cap_warning") == 1
+    assert "boundary_violation" not in phases
+    warning = next(e for e in trial.events if e.phase == "cost_cap_warning")
+    assert warning.payload["scope"] == "per_trial"
+    assert warning.payload["cap_usd"] == 0.10
+
+
+def test_per_trial_cost_cap_hard_stop_produces_boundary_violation(tmp_path):
+    """Cost above cap → boundary_violation event, outcome, zeroed quality."""
+    runner, _ = _per_problem_runner(
+        tmp_path,
+        per_problem_metrics=[
+            Metrics(
+                tokens_consumed=10,
+                validation_pass_rate=1.0,
+                quality_score=1.0,
+                cost_dollars=0.20,  # > 0.10 cap
+            )
+        ],
+        n_problems=1,
+    )
+    trial = runner.run_trial(
+        "t-001",
+        _package(),
+        _suite_ref(),
+        _versions(),
+        per_trial_cost_cap_usd=0.10,
+    )
+    assert trial.outcome == "boundary_violation"
+    phases = [e.phase for e in trial.events]
+    assert "boundary_violation" in phases
+    assert phases[-1] == "finalized"
+    assert trial.final_metrics is not None
+    assert trial.final_metrics.cost_dollars == pytest.approx(0.20)
+    assert trial.final_metrics.tokens_consumed == 10
+    assert trial.final_metrics.validation_pass_rate == 0.0
+    assert trial.final_metrics.quality_score == 0.0
+    finalized = next(e for e in trial.events if e.phase == "finalized")
+    assert finalized.payload["outcome"] == "boundary_violation"
+    boundary = next(e for e in trial.events if e.phase == "boundary_violation")
+    assert boundary.payload["reason"] == "per_trial_cost_cap"
+    assert boundary.payload["cap_usd"] == 0.10
+    assert boundary.payload["cumulative_cost_dollars"] == pytest.approx(0.20)
+
+
+def test_per_trial_cost_cap_stops_running_remaining_problems(tmp_path):
+    """Three problems, cap tripped after p2 → p3 never runs."""
+    runner, _ = _per_problem_runner(
+        tmp_path,
+        per_problem_metrics=[
+            Metrics(
+                tokens_consumed=5,
+                validation_pass_rate=1.0,
+                quality_score=1.0,
+                cost_dollars=0.04,
+            ),
+            Metrics(
+                tokens_consumed=5,
+                validation_pass_rate=1.0,
+                quality_score=1.0,
+                cost_dollars=0.08,  # cumulative 0.12 > 0.10
+            ),
+            Metrics(
+                tokens_consumed=5,
+                validation_pass_rate=1.0,
+                quality_score=1.0,
+                cost_dollars=0.04,  # should never be scored
+            ),
+        ],
+        n_problems=3,
+    )
+    trial = runner.run_trial(
+        "t-001",
+        _package(),
+        _suite_ref(),
+        _versions(),
+        per_trial_cost_cap_usd=0.10,
+    )
+    assert trial.outcome == "boundary_violation"
+    scored_events = [e for e in trial.events if e.phase == "scored_objective"]
+    assert len(scored_events) == 2
+    assert trial.final_metrics is not None
+    assert trial.final_metrics.cost_dollars == pytest.approx(0.12)
+    assert trial.final_metrics.tokens_consumed == 10
+
+
+def test_per_trial_cost_cap_warning_emitted_at_most_once(tmp_path):
+    """Two problems above warning fraction → warning fires only on first crossing."""
+    runner, _ = _per_problem_runner(
+        tmp_path,
+        per_problem_metrics=[
+            Metrics(
+                tokens_consumed=5,
+                validation_pass_rate=1.0,
+                quality_score=1.0,
+                cost_dollars=0.085,  # crosses warning at 0.08
+            ),
+            Metrics(
+                tokens_consumed=5,
+                validation_pass_rate=1.0,
+                quality_score=1.0,
+                cost_dollars=0.005,  # cumulative 0.09, still under cap
+            ),
+        ],
+        n_problems=2,
+    )
+    trial = runner.run_trial(
+        "t-001",
+        _package(),
+        _suite_ref(),
+        _versions(),
+        per_trial_cost_cap_usd=0.10,
+    )
+    assert trial.outcome == "completed"
+    phases = [e.phase for e in trial.events]
+    assert phases.count("cost_cap_warning") == 1
+
+
 def test_run_trial_passes_workspace_to_harness(tmp_path):
     """The harness receives ``problem.workspace_dir`` as its workspace
     argument (Phase 1 placeholder; Phase 2 introduces tmpdir copy)."""

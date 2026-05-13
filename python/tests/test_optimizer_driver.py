@@ -123,6 +123,8 @@ def _driver(
     seed: int = 0,
     trial_dir: Path | None = None,
     id_factory=None,
+    per_trial_cost_cap_usd: float | None = None,
+    per_run_cost_cap_usd: float | None = None,
 ) -> tuple[OptimizerDriver, PerTrialDirectoryAdapter]:
     if metrics_by_model is None:
         metrics_by_model = {
@@ -152,6 +154,8 @@ def _driver(
         eval_suite_ref=_suite_ref(),
         version_vector=_versions(),
         trial_id_factory=factory,
+        per_trial_cost_cap_usd=per_trial_cost_cap_usd,
+        per_run_cost_cap_usd=per_run_cost_cap_usd,
     )
     return driver, persistence
 
@@ -232,6 +236,302 @@ def test_driver_appends_to_existing_history(tmp_path):
     assert result.halted_reason == "exhausted"
     assert len(result.trials) == 1
     assert len(persistence.load_trials()) == 2
+
+
+def test_driver_passes_per_trial_cap_to_runner(tmp_path):
+    """A per-trial cap configured on the driver produces boundary_violation
+    trials when crossed."""
+    driver, persistence = _driver(
+        tmp_path,
+        metrics_by_model={
+            "google/gemini-2.5-flash": (100, 0.05, True),  # under cap
+            "anthropic/claude-haiku-4-5": (200, 0.20, True),  # over cap
+        },
+        per_trial_cost_cap_usd=0.10,
+    )
+    driver.run(trial_budget=2)
+    on_disk = persistence.load_trials()
+    by_model = {t.package.model: t for t in on_disk}
+    assert by_model["google/gemini-2.5-flash"].outcome == "completed"
+    assert by_model["anthropic/claude-haiku-4-5"].outcome == "boundary_violation"
+
+
+def test_per_run_cost_cap_halts_driver(tmp_path):
+    """Each trial costs $0.06; cap=$0.10 → halts after second trial."""
+    driver, _ = _driver(
+        tmp_path,
+        metrics_by_model={
+            "google/gemini-2.5-flash": (100, 0.06, True),
+            "anthropic/claude-haiku-4-5": (200, 0.06, True),
+        },
+        per_run_cost_cap_usd=0.10,
+    )
+    result = driver.run(trial_budget=5)
+    assert result.halted_reason == "per_run_cost_cap"
+    assert len(result.trials) == 2
+
+
+def test_per_run_cost_cap_none_disables_check(tmp_path):
+    """With cap=None, expensive trials don't halt the driver."""
+    driver, _ = _driver(
+        tmp_path,
+        metrics_by_model={
+            "google/gemini-2.5-flash": (100, 100.0, True),
+            "anthropic/claude-haiku-4-5": (200, 100.0, True),
+        },
+        per_run_cost_cap_usd=None,
+    )
+    result = driver.run(trial_budget=5)
+    assert result.halted_reason in ("budget", "exhausted")
+
+
+def test_per_run_cost_cap_emits_warning_log(tmp_path, caplog):
+    """Cumulative cost above warning fraction × cap → logged warning (once)."""
+    import logging
+
+    driver, _ = _driver(
+        tmp_path,
+        metrics_by_model={
+            "google/gemini-2.5-flash": (100, 0.05, True),
+            "anthropic/claude-haiku-4-5": (200, 0.05, True),
+        },
+        per_run_cost_cap_usd=0.10,
+    )
+    with caplog.at_level(logging.WARNING, logger="pi_evaluator.optimizer_driver"):
+        driver.run(trial_budget=5)
+    warnings = [
+        r for r in caplog.records if "per-run cost cap" in r.getMessage().lower()
+    ]
+    assert len(warnings) == 1
+
+
+class _SeqProposer:
+    """Returns distinct packages one per call until exhausted.
+
+    Distinct system_prompts ensure candidate-identity dedup doesn't
+    re-cycle a previously-proposed package back through the loop.
+    """
+
+    def __init__(self, count: int) -> None:
+        self._count = count
+        self._called = 0
+
+    def propose(self, history) -> Package | None:
+        if self._called >= self._count:
+            return None
+        i = self._called
+        self._called += 1
+        return Package(
+            model="google/gemini-2.5-flash",
+            system_prompt=f"v{i}",
+            skills=["read"],
+            template_values={},
+        )
+
+
+class _OutcomeSeqHarness(AgentHarnessPort):
+    """Returns telemetry whose outcome cycles through a configured sequence.
+
+    Each entry maps to a per-call RawTelemetry:
+      - ``"completed"`` → exit_code=0, no error
+      - ``"error"``     → exit_code=1
+      - ``"cost"``      → exit_code=0 but expensive (caller must set a
+        per-trial cost cap below the configured cost to trigger
+        boundary_violation)
+    """
+
+    def __init__(self, outcomes: list[str], cost_for_cost: float = 100.0) -> None:
+        self._outcomes = outcomes
+        self._cost = cost_for_cost
+        self._called = 0
+
+    def run(self, package, problem, workspace) -> RawTelemetry:
+        outcome = self._outcomes[self._called]
+        self._called += 1
+        if outcome == "completed":
+            return RawTelemetry(
+                events=[
+                    {
+                        "type": "message_end",
+                        "message": {
+                            "role": "assistant",
+                            "usage": {
+                                "totalTokens": 1,
+                                "cost": {"total": 0.0},
+                            },
+                        },
+                    }
+                ],
+                exit_code=0,
+                validation_results=[
+                    ValidationResult(
+                        step_name="v",
+                        exit_code=0,
+                        stdout="",
+                        stderr="",
+                        passed=True,
+                    )
+                ],
+            )
+        if outcome == "error":
+            return RawTelemetry(events=[], exit_code=1)
+        if outcome == "cost":
+            return RawTelemetry(
+                events=[
+                    {
+                        "type": "message_end",
+                        "message": {
+                            "role": "assistant",
+                            "usage": {
+                                "totalTokens": 1,
+                                "cost": {"total": self._cost},
+                            },
+                        },
+                    }
+                ],
+                exit_code=0,
+                validation_results=[
+                    ValidationResult(
+                        step_name="v",
+                        exit_code=0,
+                        stdout="",
+                        stderr="",
+                        passed=True,
+                    )
+                ],
+            )
+        raise ValueError(f"unknown outcome {outcome}")
+
+
+def _outcome_driver(
+    tmp_path: Path,
+    *,
+    outcomes: list[str],
+    proposer_count: int | None = None,
+    cost_for_cost: float = 100.0,
+    **driver_kwargs,
+) -> tuple[OptimizerDriver, PerTrialDirectoryAdapter]:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    persistence = PerTrialDirectoryAdapter(tmp_path / "trials")
+    runner = TrialRunner(
+        harness=_OutcomeSeqHarness(outcomes, cost_for_cost=cost_for_cost),
+        scorer=SyntheticSuiteScorer(),
+        persistence=persistence,
+        suite_source=_OneProblemSuite(workspace),
+    )
+    proposer = _SeqProposer(proposer_count or len(outcomes))
+    driver = OptimizerDriver(
+        runner=runner,
+        proposer=proposer,
+        persistence=persistence,
+        eval_suite_ref=_suite_ref(),
+        version_vector=_versions(),
+        trial_id_factory=_id_factory(),
+        **driver_kwargs,
+    )
+    return driver, persistence
+
+
+def test_circuit_breaker_trips_on_consecutive_errors(tmp_path):
+    driver, _ = _outcome_driver(
+        tmp_path,
+        outcomes=["error", "error", "error", "error", "error"],
+        max_consecutive_errors=3,
+    )
+    result = driver.run(trial_budget=5)
+    assert result.halted_reason == "circuit_breaker_errors"
+    assert len(result.trials) == 3
+
+
+def test_circuit_breaker_consecutive_errors_resets_on_completed(tmp_path):
+    """[error, error, completed, error, error] never hits 3 in a row."""
+    driver, _ = _outcome_driver(
+        tmp_path,
+        outcomes=["error", "error", "completed", "error", "error"],
+        max_consecutive_errors=3,
+    )
+    result = driver.run(trial_budget=5)
+    assert result.halted_reason in ("budget", "exhausted")
+    assert len(result.trials) == 5
+
+
+def test_circuit_breaker_consecutive_errors_none_disables(tmp_path):
+    driver, _ = _outcome_driver(
+        tmp_path,
+        outcomes=["error"] * 4,
+        max_consecutive_errors=None,
+    )
+    result = driver.run(trial_budget=4)
+    assert result.halted_reason in ("budget", "exhausted")
+    assert len(result.trials) == 4
+
+
+def test_circuit_breaker_error_count_unaffected_by_boundary_violation(tmp_path):
+    """boundary_violation does not reset the consecutive-errors counter.
+
+    Sequence [error, cost, error] with per_trial_cap=$0.10 makes the
+    middle trial a boundary_violation (cost=$1.00). The error counter
+    stays at 1 across the boundary, then becomes 2 — at max=2 the third
+    trial trips the breaker.
+    """
+    driver, _ = _outcome_driver(
+        tmp_path,
+        outcomes=["error", "cost", "error"],
+        max_consecutive_errors=2,
+        per_trial_cost_cap_usd=0.10,
+        cost_for_cost=1.0,
+    )
+    result = driver.run(trial_budget=5)
+    assert result.halted_reason == "circuit_breaker_errors"
+    assert len(result.trials) == 3
+    assert result.trials[1].outcome == "boundary_violation"
+
+
+def test_circuit_breaker_trips_on_time_without_completed(tmp_path):
+    """Fake clock advances 6s per call; max_time=10s → trips at trial 2."""
+    from datetime import timedelta
+
+    times = iter([0.0, 6.0, 12.0, 18.0, 24.0])
+    driver, _ = _outcome_driver(
+        tmp_path,
+        outcomes=["error", "error", "error"],
+        max_time_without_completed_trial=timedelta(seconds=10),
+        monotonic_clock=lambda: next(times),
+    )
+    result = driver.run(trial_budget=3)
+    assert result.halted_reason == "circuit_breaker_time"
+    assert len(result.trials) == 2
+
+
+def test_circuit_breaker_time_resets_on_completed_trial(tmp_path):
+    """[error, completed, error] keeps the elapsed window short."""
+    from datetime import timedelta
+
+    times = iter([0.0, 6.0, 12.0, 18.0])
+    driver, _ = _outcome_driver(
+        tmp_path,
+        outcomes=["error", "completed", "error"],
+        max_time_without_completed_trial=timedelta(seconds=10),
+        monotonic_clock=lambda: next(times),
+    )
+    result = driver.run(trial_budget=3)
+    assert result.halted_reason in ("budget", "exhausted")
+    assert len(result.trials) == 3
+
+
+def test_circuit_breaker_time_none_disables(tmp_path):
+    """max_time_without_completed_trial=None → no time-based trip."""
+    times = iter([0.0, 1000.0, 2000.0, 3000.0])
+    driver, _ = _outcome_driver(
+        tmp_path,
+        outcomes=["error", "error", "error"],
+        max_time_without_completed_trial=None,
+        monotonic_clock=lambda: next(times),
+    )
+    result = driver.run(trial_budget=3)
+    assert result.halted_reason in ("budget", "exhausted")
+    assert len(result.trials) == 3
 
 
 def test_replicates_greater_than_one_not_yet_supported(tmp_path):

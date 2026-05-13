@@ -20,6 +20,13 @@ from .ports.eval_suite_source_port import EvalSuiteSourcePort
 from .ports.persistence_port import PersistencePort
 from .ports.scoring_port import ScoringPort
 
+COST_CAP_WARNING_FRACTION = 0.8
+"""ADR 0005 soft-warning threshold expressed as a fraction of the hard cap.
+
+A fixed v1 constant rather than a per-call parameter — keeps the cap
+API one-knob. Reconsider when operators ask for asymmetric warning /
+hard-stop bands (e.g., warn at 50%, halt at 100%)."""
+
 
 def _default_clock() -> str:
     return datetime.now(UTC).isoformat()
@@ -53,6 +60,7 @@ class TrialRunner:
         package: Package,
         eval_suite_ref: EvalSuiteRef,
         version_vector: VersionVector,
+        per_trial_cost_cap_usd: float | None = None,
     ) -> Trial:
         trial = Trial(
             trial_id=trial_id,
@@ -74,11 +82,15 @@ class TrialRunner:
         problems = self._suite_source.load()
         per_problem_metrics: list[Metrics] = []
         per_problem_telemetry: list[RawTelemetry] = []
+        cumulative_cost = 0.0
+        warning_emitted = False
+        boundary_tripped = False
         for problem in problems:
             telemetry = self._harness.run(package, problem, problem.workspace_dir)
             metrics = self._scorer.score_objective(telemetry)
             per_problem_metrics.append(metrics)
             per_problem_telemetry.append(telemetry)
+            cumulative_cost += metrics.cost_dollars
 
             self._emit(
                 trial,
@@ -106,8 +118,52 @@ class TrialRunner:
                 ),
             )
 
-        final_metrics = _aggregate(per_problem_metrics)
-        outcome = _classify_outcome(per_problem_telemetry)
+            if per_trial_cost_cap_usd is not None:
+                warning_threshold = (
+                    per_trial_cost_cap_usd * COST_CAP_WARNING_FRACTION
+                )
+                if not warning_emitted and cumulative_cost > warning_threshold:
+                    self._emit(
+                        trial,
+                        TrialEvent(
+                            phase="cost_cap_warning",
+                            timestamp=self._clock(),
+                            payload={
+                                "scope": "per_trial",
+                                "cap_usd": per_trial_cost_cap_usd,
+                                "cumulative_cost_dollars": cumulative_cost,
+                                "fraction": COST_CAP_WARNING_FRACTION,
+                            },
+                        ),
+                    )
+                    warning_emitted = True
+                if cumulative_cost > per_trial_cost_cap_usd:
+                    self._emit(
+                        trial,
+                        TrialEvent(
+                            phase="boundary_violation",
+                            timestamp=self._clock(),
+                            payload={
+                                "reason": "per_trial_cost_cap",
+                                "cap_usd": per_trial_cost_cap_usd,
+                                "cumulative_cost_dollars": cumulative_cost,
+                            },
+                        ),
+                    )
+                    boundary_tripped = True
+                    break
+
+        if boundary_tripped:
+            final_metrics = Metrics(
+                tokens_consumed=sum(m.tokens_consumed for m in per_problem_metrics),
+                cost_dollars=sum(m.cost_dollars for m in per_problem_metrics),
+                validation_pass_rate=0.0,
+                quality_score=0.0,
+            )
+            outcome: Outcome = "boundary_violation"
+        else:
+            final_metrics = _aggregate(per_problem_metrics)
+            outcome = _classify_outcome(per_problem_telemetry)
         trial.final_metrics = final_metrics
         trial.outcome = outcome
         self._emit(
@@ -154,8 +210,9 @@ def _classify_outcome(telemetries: list[RawTelemetry]) -> Outcome:
     """ADR 0007 trial-outcome classification.
 
     Any model-layer error in any problem's telemetry escalates the
-    whole trial. ``boundary_violation`` is unreachable until Phase 3.4
-    lands timeout / cost-cap enforcement.
+    whole trial. ``boundary_violation`` is set by the watchdog in
+    ``run_trial`` when a cost cap trips and is not derived from
+    telemetry, so it is not handled here.
     """
     if any(_has_model_error(t) for t in telemetries):
         return "error_escalated"

@@ -152,13 +152,13 @@ If a future skill mechanism introduces a higher-level "capability pipeline" wher
 
 **Where:** `python/src/pi_evaluator/trial_runner.py` (`_classify_outcome`, `_has_model_error`).
 
-**Decision:** A trial is `error_escalated` if **any** problem's `RawTelemetry` shows either (a) a non-zero subprocess exit code, or (b) an assistant `message_end` event with `stopReason == "error"`. Otherwise the trial is `completed`. `boundary_violation` is unreachable in Phase 2 closeout — it lights up when Phase 3.4 lands subprocess timeouts and cost-cap enforcement.
+**Decision:** A trial is `error_escalated` if **any** problem's `RawTelemetry` shows either (a) a non-zero subprocess exit code, or (b) an assistant `message_end` event with `stopReason == "error"`. Otherwise — absent a boundary trip from the cost-cap watchdog — the trial is `completed`. The cost-cap watchdog in `run_trial` sets `boundary_violation` directly when `per_trial_cost_cap_usd` is crossed, bypassing this classifier; subprocess timeouts remain unimplemented.
 
 The acceptance test on a Pi run with an expired API key is the motivating case: Pi exits 0 (it ran cleanly), but every assistant `message_end` carries `stopReason: "error"` from the provider's rejected request. Without rule (b), the trial would close as `completed` with zero metrics — a silent degradation that ADR 0007 explicitly rules out.
 
 The classifier deliberately does not flag empty event streams or zero `totalTokens` as errors: a zero-token completed run is just a vacuous success and the surrogate sees it as such (low quality, low cost). The classifier flags only signals that say *something failed*.
 
-Phase 3.4 grows the rule with `boundary_violation` triggers (subprocess `TimeoutExpired`, `per_trial_cost_cap_usd` breach, `per_run_cost_cap_usd` breach) and wires the adapter-layer retry budget around it (`error_escalated` only after retries exhaust).
+Phase 3.4 grows the rule with `boundary_violation` triggers — the `per_trial_cost_cap_usd` watchdog is wired in `run_trial` now (per-run cap halts the driver between trials rather than producing a boundary-violated trial); subprocess `TimeoutExpired` and the adapter-layer retry budget (`error_escalated` only after retries exhaust) remain to land.
 
 **Related:** [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md); `python/tests/test_trial_runner.py::test_run_trial_classifies_*`; commit `61fc31e`.
 
@@ -177,3 +177,47 @@ Phase 3.4 will need to make this explicit: cleanup on `completed` (and possibly 
 If multi-trial runs at Phase 4 cadence reveal a real leak (disk pressure, inode exhaustion), revisit immediately — that is one of ADR 0004's reconsider triggers.
 
 **Related:** [ADR 0004 — Workspace Isolation Strategy](adrs/0004-workspace-isolation.md); [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md).
+
+---
+
+### Cost-cap enforcement: between-step polling, single warning fraction
+
+**Where:** `python/src/pi_evaluator/trial_runner.py` (`COST_CAP_WARNING_FRACTION`, `run_trial` cost-cap loop); `python/src/pi_evaluator/optimizer_driver.py` (`run` cumulative-cost check).
+
+**Decision:** Cost-cap enforcement is **between-step polling**, not a parallel watchdog: the per-trial cap is checked after each problem's `scored_objective` event inside `TrialRunner.run_trial`; the per-run cap is checked after each trial completes inside `OptimizerDriver.run`. The "two thresholds" commitment from ADR 0005 is realized as a single configurable hard cap (`per_trial_cost_cap_usd`, `per_run_cost_cap_usd`) plus a fixed warning fraction `COST_CAP_WARNING_FRACTION = 0.8` of that cap. Warning events for per-trial caps land in the trial event stream as `cost_cap_warning` (phase) with `scope="per_trial"`; per-run warnings are emitted via Python `logging.warning` on the driver's logger rather than as trial events, because they cross trial boundaries and the trial-event invariant is *"`finalized` is the last event"*.
+
+The between-step approach was chosen over a parallel signal-handling watchdog for v1 because Pi runs are short relative to step granularity, the harness is `subprocess.run` not a streaming reader, and intra-step kill (SIGTERM/SIGKILL of a running Pi) carries cleanup hazards (half-mutated workspace, partial event stream) that we'd rather not engage with until ADR 0007's retry/preservation infrastructure lands. The trade-off is that a single problem whose cost vastly exceeds the cap (e.g., `cap=$0.01`, problem actually spends `$1.00`) won't be killed mid-flight — the cap only prevents the *next* problem from running. Acceptable for v1; revisit when single-problem cost regularly exceeds the per-trial cap by more than ~2×.
+
+Single warning fraction (0.8) is a v1 simplification — operators can't tune warning vs. hard-stop independently. If operators ask for asymmetric bands (warn early, halt late) the constant becomes a parameter.
+
+**Related:** [ADR 0005 — Trial Cost and Budget Model](adrs/0005-trial-cost-and-budget.md); [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md); `python/tests/test_trial_runner.py::test_per_trial_cost_cap_*`; `python/tests/test_optimizer_driver.py::test_per_run_cost_cap_*`.
+
+---
+
+### Circuit breaker: boundary_violations are neutral, completed resets, monotonic clock
+
+**Where:** `python/src/pi_evaluator/optimizer_driver.py` (`run` circuit-breaker checks; `monotonic_clock` parameter).
+
+**Decision:** The driver's circuit breaker (ADR 0007) tracks two state machines between trials. (1) A `consecutive_errors` counter that **increments only on `error_escalated`**, **resets only on `completed`**, and is **left unchanged on `boundary_violation`** — a boundary-violated trial neither breaks an error streak nor counts as one. Trips when the counter is `>= max_consecutive_errors`. (2) A `last_completed_at` wall-clock timestamp from a monotonic clock that advances only when a trial finishes with `outcome=="completed"`; trips when `now - last_completed_at` exceeds `max_time_without_completed_trial.total_seconds()`.
+
+The state transitions are driven by Bockeler-style symmetry: `completed` is the *positive* signal that resets both state machines; `error_escalated` is the *operationally suspicious* signal that the breaker exists to catch; `boundary_violation` is a *useful negative signal* (ADR 0006 — the HetGP learns the cost cliff from it) and so does not contribute to "the optimization isn't making progress." A run of pure boundary_violations does not trip the error breaker but will eventually trip the time breaker once `max_time_without_completed_trial` elapses without any `completed` trial — which is the correct behavior.
+
+The driver takes a `monotonic_clock` callable (default `time.monotonic`) so tests can advance the clock deterministically. Wall-clock measurement uses `time.monotonic` rather than `datetime.now()` to be NTP-correction-safe.
+
+The trip-condition order in the loop is: error breaker → time breaker → per-run cost cap. Ordering is observable only in the rare case where two thresholds cross on the same trial; the listed order reports the "earlier-conceptually" reason first (errors are loudest).
+
+**Related:** [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md); `python/tests/test_optimizer_driver.py::test_circuit_breaker_*`.
+
+---
+
+### Adapter-layer retries: inside the adapter, default budget=2
+
+**Where:** `python/src/pi_evaluator/adapters/cli_subprocess_adapter.py` (`CliSubprocessAdapter.run`, `_is_retryable_error`).
+
+**Decision:** ADR 0007 B1's retry budget is implemented **inside `CliSubprocessAdapter`** rather than as a wrapping decorator port, so the "same materialized workspace across retries" commitment is honored natively (the workspace is created once per `run` call before the retry loop, not per attempt). The adapter takes `retry_budget` (default `2`, meaning up to 2 retries on top of the initial attempt = 3 total attempts), `backoff_seconds` (default `(30.0, 60.0)`), and an injectable `sleep` callable so tests don't actually wait. Retryable signals match `TrialRunner._has_model_error` precisely — non-zero subprocess exit OR an assistant `message_end` with `stopReason == "error"`. The predicate is duplicated as `_is_retryable_error` in the adapter rather than imported from `trial_runner` to keep adapter→orchestrator dependency direction clean; the two must stay in sync as ADR 0007 A2 evolves.
+
+The driver-level `retry_budget` parameter (`OptimizerDriver.__init__`) remains declarative — it documents the ADR commitment but does not actively flow into the adapter. Operators wire the budget at `CliSubprocessAdapter` construction time. If divergence ever matters in practice (driver says 2, adapter says 5 — which wins?) the simplest fix is to remove the driver-side parameter; for v1 it stays for API consistency with the other ADR-tracked parameters declared there.
+
+When `retry_budget` exhausts without success, the adapter returns the last attempt's `RawTelemetry` verbatim. The trial runner's `_classify_outcome` rule sees this and tags the trial `error_escalated`, satisfying ADR 0007's "persistent errors preserve and queue" commitment (the trial directory is already on disk, so preservation is automatic — a dedicated preservation queue is not part of this chunk). Tests that intentionally exercise failure paths must opt out with `retry_budget=0` to avoid 90-second real-time backoff waits; the production-quality default (2 retries, 30/60s backoff) is what unattended runs need.
+
+**Related:** [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md); `python/tests/test_cli_subprocess_adapter.py::test_retries_*`, `test_default_retry_budget_is_two`, `test_returns_last_failure_after_retry_budget_exhausted`, `test_retries_use_same_materialized_workspace`.
