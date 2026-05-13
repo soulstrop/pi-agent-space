@@ -207,3 +207,17 @@ The driver takes a `monotonic_clock` callable (default `time.monotonic`) so test
 The trip-condition order in the loop is: error breaker → time breaker → per-run cost cap. Ordering is observable only in the rare case where two thresholds cross on the same trial; the listed order reports the "earlier-conceptually" reason first (errors are loudest).
 
 **Related:** [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md); `python/tests/test_optimizer_driver.py::test_circuit_breaker_*`.
+
+---
+
+### Adapter-layer retries: inside the adapter, default budget=2
+
+**Where:** `python/src/pi_evaluator/adapters/cli_subprocess_adapter.py` (`CliSubprocessAdapter.run`, `_is_retryable_error`).
+
+**Decision:** ADR 0007 B1's retry budget is implemented **inside `CliSubprocessAdapter`** rather than as a wrapping decorator port, so the "same materialized workspace across retries" commitment is honored natively (the workspace is created once per `run` call before the retry loop, not per attempt). The adapter takes `retry_budget` (default `2`, meaning up to 2 retries on top of the initial attempt = 3 total attempts), `backoff_seconds` (default `(30.0, 60.0)`), and an injectable `sleep` callable so tests don't actually wait. Retryable signals match `TrialRunner._has_model_error` precisely — non-zero subprocess exit OR an assistant `message_end` with `stopReason == "error"`. The predicate is duplicated as `_is_retryable_error` in the adapter rather than imported from `trial_runner` to keep adapter→orchestrator dependency direction clean; the two must stay in sync as ADR 0007 A2 evolves.
+
+The driver-level `retry_budget` parameter (`OptimizerDriver.__init__`) remains declarative — it documents the ADR commitment but does not actively flow into the adapter. Operators wire the budget at `CliSubprocessAdapter` construction time. If divergence ever matters in practice (driver says 2, adapter says 5 — which wins?) the simplest fix is to remove the driver-side parameter; for v1 it stays for API consistency with the other ADR-tracked parameters declared there.
+
+When `retry_budget` exhausts without success, the adapter returns the last attempt's `RawTelemetry` verbatim. The trial runner's `_classify_outcome` rule sees this and tags the trial `error_escalated`, satisfying ADR 0007's "persistent errors preserve and queue" commitment (the trial directory is already on disk, so preservation is automatic — a dedicated preservation queue is not part of this chunk). Tests that intentionally exercise failure paths must opt out with `retry_budget=0` to avoid 90-second real-time backoff waits; the production-quality default (2 retries, 30/60s backoff) is what unattended runs need.
+
+**Related:** [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md); `python/tests/test_cli_subprocess_adapter.py::test_retries_*`, `test_default_retry_budget_is_two`, `test_returns_last_failure_after_retry_budget_exhausted`, `test_retries_use_same_materialized_workspace`.

@@ -158,7 +158,7 @@ def test_validation_runs_even_when_pi_fails(tmp_path):
     failing_pi.chmod(
         failing_pi.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
     )
-    adapter = CliSubprocessAdapter(pi_binary=str(failing_pi))
+    adapter = CliSubprocessAdapter(pi_binary=str(failing_pi), retry_budget=0)
     problem = _problem(
         src,
         [

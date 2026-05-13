@@ -41,6 +41,49 @@ def _make_mock_pi(
     return str(script)
 
 
+def _make_counting_mock_pi(
+    tmp_path: Path,
+    attempts: list[dict],
+    counter_path: Path | None = None,
+    cwd_log: Path | None = None,
+) -> str:
+    """Mock Pi that returns different output across invocations.
+
+    Each ``attempts`` entry shapes one call: ``{"exit_code": int,
+    "stdout_lines": list[str]}``. Uses ``counter_path`` (default
+    ``tmp_path/counter``) to track invocation count across processes.
+    Optional ``cwd_log`` appends each call's cwd so tests can verify
+    the same materialized workspace is reused across retries.
+    """
+    if counter_path is None:
+        counter_path = tmp_path / "mock_pi_counter"
+    script = tmp_path / "mock_pi"
+    encoded = json.dumps(attempts)
+    parts = [
+        "#!/usr/bin/env python3",
+        "import json, os, sys, pathlib",
+        f"counter_path = pathlib.Path({str(counter_path)!r})",
+        f"attempts = json.loads({encoded!r})",
+        "n = int(counter_path.read_text()) if counter_path.exists() else 0",
+        "counter_path.write_text(str(n + 1))",
+        "idx = min(n, len(attempts) - 1)",
+        "attempt = attempts[idx]",
+    ]
+    if cwd_log is not None:
+        parts.append(f"with open({str(cwd_log)!r}, 'a') as f:")
+        parts.append("    f.write(os.getcwd() + chr(10))")
+    parts.extend(
+        [
+            "for line in attempt.get('stdout_lines', []):",
+            "    print(line, flush=True)",
+            "sys.exit(attempt['exit_code'])",
+        ]
+    )
+    script.write_text("\n".join(parts) + "\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(script)
+
+
 def _problem(workspace: Path, prompt: str = "solve it") -> GraduatedProblem:
     return GraduatedProblem(
         id="p1",
@@ -102,7 +145,7 @@ def test_parses_json_event_stream(tmp_path):
 def test_captures_nonzero_exit_code(tmp_path):
     src = _src_workspace(tmp_path)
     pi = _make_mock_pi(tmp_path, stdout_lines=[], exit_code=42)
-    adapter = CliSubprocessAdapter(pi_binary=pi)
+    adapter = CliSubprocessAdapter(pi_binary=pi, retry_budget=0)
     result = adapter.run(_package(), _problem(src), workspace=str(src))
     assert result.exit_code == 42
 
@@ -131,7 +174,7 @@ def test_captures_stderr(tmp_path):
         stderr_text="pi: failed to launch provider\n",
         exit_code=1,
     )
-    adapter = CliSubprocessAdapter(pi_binary=pi)
+    adapter = CliSubprocessAdapter(pi_binary=pi, retry_budget=0)
     result = adapter.run(_package(), _problem(src), workspace=str(src))
     assert "failed to launch provider" in result.stderr
     assert result.exit_code == 1
@@ -194,3 +237,137 @@ def test_omits_optional_flags_when_unset(tmp_path):
     argv = json.loads(log.read_text())["argv"]
     assert "--system-prompt" not in argv
     assert "--tools" not in argv
+
+
+def test_default_retry_budget_is_two(tmp_path):
+    """ADR 0007 commits to N=2 retries as the default. Persistent failure
+    across (1 initial + 2 retries) = 3 attempts."""
+    src = _src_workspace(tmp_path)
+    pi = _make_counting_mock_pi(
+        tmp_path,
+        attempts=[{"exit_code": 1, "stdout_lines": []}] * 5,
+    )
+    sleeps: list[float] = []
+    adapter = CliSubprocessAdapter(pi_binary=pi, sleep=sleeps.append)
+    result = adapter.run(_package(), _problem(src), workspace=str(src))
+    assert int((tmp_path / "mock_pi_counter").read_text()) == 3
+    assert result.exit_code == 1
+    assert len(sleeps) == 2  # backoff before retry 1 and retry 2
+
+
+def test_retries_on_nonzero_exit_until_success(tmp_path):
+    src = _src_workspace(tmp_path)
+    success_events = [
+        '{"type":"message_end","message":{"role":"assistant",'
+        '"usage":{"totalTokens":42}}}',
+    ]
+    pi = _make_counting_mock_pi(
+        tmp_path,
+        attempts=[
+            {"exit_code": 1, "stdout_lines": []},
+            {"exit_code": 0, "stdout_lines": success_events},
+        ],
+    )
+    sleeps: list[float] = []
+    adapter = CliSubprocessAdapter(pi_binary=pi, retry_budget=2, sleep=sleeps.append)
+    result = adapter.run(_package(), _problem(src), workspace=str(src))
+    assert result.exit_code == 0
+    assert int((tmp_path / "mock_pi_counter").read_text()) == 2
+    assert len(sleeps) == 1
+
+
+def test_returns_last_failure_after_retry_budget_exhausted(tmp_path):
+    src = _src_workspace(tmp_path)
+    pi = _make_counting_mock_pi(
+        tmp_path,
+        attempts=[{"exit_code": 7, "stdout_lines": []}] * 5,
+    )
+    adapter = CliSubprocessAdapter(
+        pi_binary=pi, retry_budget=2, sleep=lambda _s: None
+    )
+    result = adapter.run(_package(), _problem(src), workspace=str(src))
+    assert result.exit_code == 7
+    assert int((tmp_path / "mock_pi_counter").read_text()) == 3
+
+
+def test_retries_on_assistant_stop_reason_error(tmp_path):
+    """stopReason=='error' on assistant message_end is treated as a
+    retryable transient even when subprocess exit is clean."""
+    src = _src_workspace(tmp_path)
+    error_events = [
+        '{"type":"message_end","message":{"role":"assistant",'
+        '"stopReason":"error","usage":{"totalTokens":0}}}',
+    ]
+    success_events = [
+        '{"type":"message_end","message":{"role":"assistant",'
+        '"usage":{"totalTokens":10}}}',
+    ]
+    pi = _make_counting_mock_pi(
+        tmp_path,
+        attempts=[
+            {"exit_code": 0, "stdout_lines": error_events},
+            {"exit_code": 0, "stdout_lines": success_events},
+        ],
+    )
+    adapter = CliSubprocessAdapter(
+        pi_binary=pi, retry_budget=2, sleep=lambda _s: None
+    )
+    result = adapter.run(_package(), _problem(src), workspace=str(src))
+    assert result.exit_code == 0
+    assert int((tmp_path / "mock_pi_counter").read_text()) == 2
+    assert result.events[0]["message"].get("stopReason") != "error"
+
+
+def test_no_retry_on_clean_success(tmp_path):
+    src = _src_workspace(tmp_path)
+    success_events = [
+        '{"type":"message_end","message":{"role":"assistant",'
+        '"usage":{"totalTokens":5}}}',
+    ]
+    pi = _make_counting_mock_pi(
+        tmp_path,
+        attempts=[{"exit_code": 0, "stdout_lines": success_events}],
+    )
+    sleeps: list[float] = []
+    adapter = CliSubprocessAdapter(pi_binary=pi, retry_budget=2, sleep=sleeps.append)
+    adapter.run(_package(), _problem(src), workspace=str(src))
+    assert int((tmp_path / "mock_pi_counter").read_text()) == 1
+    assert sleeps == []
+
+
+def test_retries_use_same_materialized_workspace(tmp_path):
+    """ADR 0007 B1 commits to retrying against the same materialized
+    workspace — preserves any state Pi started building."""
+    src = _src_workspace(tmp_path)
+    cwd_log = tmp_path / "cwd_log.txt"
+    pi = _make_counting_mock_pi(
+        tmp_path,
+        attempts=[{"exit_code": 1, "stdout_lines": []}] * 3,
+        cwd_log=cwd_log,
+    )
+    adapter = CliSubprocessAdapter(
+        pi_binary=pi, retry_budget=2, sleep=lambda _s: None
+    )
+    adapter.run(_package(), _problem(src), workspace=str(src))
+    cwds = [ln for ln in cwd_log.read_text().splitlines() if ln]
+    assert len(cwds) == 3
+    assert cwds[0] == cwds[1] == cwds[2]
+    assert Path(cwds[0]) != src
+
+
+def test_backoff_schedule_passed_to_sleep(tmp_path):
+    """Backoff values from the configured schedule pass through to sleep."""
+    src = _src_workspace(tmp_path)
+    pi = _make_counting_mock_pi(
+        tmp_path,
+        attempts=[{"exit_code": 1, "stdout_lines": []}] * 5,
+    )
+    sleeps: list[float] = []
+    adapter = CliSubprocessAdapter(
+        pi_binary=pi,
+        retry_budget=2,
+        backoff_seconds=(0.1, 0.2),
+        sleep=sleeps.append,
+    )
+    adapter.run(_package(), _problem(src), workspace=str(src))
+    assert sleeps == [0.1, 0.2]
