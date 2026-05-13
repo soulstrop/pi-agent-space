@@ -70,5 +70,6 @@ done
 """
 
 [tools]
+"aqua:gastownhall/beads" = "latest"
 pandoc = "latest"
 "pipx:weasyprint" = "latest"
