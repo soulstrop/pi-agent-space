@@ -123,6 +123,8 @@ def _driver(
     seed: int = 0,
     trial_dir: Path | None = None,
     id_factory=None,
+    per_trial_cost_cap_usd: float | None = None,
+    per_run_cost_cap_usd: float | None = None,
 ) -> tuple[OptimizerDriver, PerTrialDirectoryAdapter]:
     if metrics_by_model is None:
         metrics_by_model = {
@@ -152,6 +154,8 @@ def _driver(
         eval_suite_ref=_suite_ref(),
         version_vector=_versions(),
         trial_id_factory=factory,
+        per_trial_cost_cap_usd=per_trial_cost_cap_usd,
+        per_run_cost_cap_usd=per_run_cost_cap_usd,
     )
     return driver, persistence
 
@@ -232,6 +236,73 @@ def test_driver_appends_to_existing_history(tmp_path):
     assert result.halted_reason == "exhausted"
     assert len(result.trials) == 1
     assert len(persistence.load_trials()) == 2
+
+
+def test_driver_passes_per_trial_cap_to_runner(tmp_path):
+    """A per-trial cap configured on the driver produces boundary_violation
+    trials when crossed."""
+    driver, persistence = _driver(
+        tmp_path,
+        metrics_by_model={
+            "google/gemini-2.5-flash": (100, 0.05, True),  # under cap
+            "anthropic/claude-haiku-4-5": (200, 0.20, True),  # over cap
+        },
+        per_trial_cost_cap_usd=0.10,
+    )
+    driver.run(trial_budget=2)
+    on_disk = persistence.load_trials()
+    by_model = {t.package.model: t for t in on_disk}
+    assert by_model["google/gemini-2.5-flash"].outcome == "completed"
+    assert by_model["anthropic/claude-haiku-4-5"].outcome == "boundary_violation"
+
+
+def test_per_run_cost_cap_halts_driver(tmp_path):
+    """Each trial costs $0.06; cap=$0.10 → halts after second trial."""
+    driver, _ = _driver(
+        tmp_path,
+        metrics_by_model={
+            "google/gemini-2.5-flash": (100, 0.06, True),
+            "anthropic/claude-haiku-4-5": (200, 0.06, True),
+        },
+        per_run_cost_cap_usd=0.10,
+    )
+    result = driver.run(trial_budget=5)
+    assert result.halted_reason == "per_run_cost_cap"
+    assert len(result.trials) == 2
+
+
+def test_per_run_cost_cap_none_disables_check(tmp_path):
+    """With cap=None, expensive trials don't halt the driver."""
+    driver, _ = _driver(
+        tmp_path,
+        metrics_by_model={
+            "google/gemini-2.5-flash": (100, 100.0, True),
+            "anthropic/claude-haiku-4-5": (200, 100.0, True),
+        },
+        per_run_cost_cap_usd=None,
+    )
+    result = driver.run(trial_budget=5)
+    assert result.halted_reason in ("budget", "exhausted")
+
+
+def test_per_run_cost_cap_emits_warning_log(tmp_path, caplog):
+    """Cumulative cost above warning fraction × cap → logged warning (once)."""
+    import logging
+
+    driver, _ = _driver(
+        tmp_path,
+        metrics_by_model={
+            "google/gemini-2.5-flash": (100, 0.05, True),
+            "anthropic/claude-haiku-4-5": (200, 0.05, True),
+        },
+        per_run_cost_cap_usd=0.10,
+    )
+    with caplog.at_level(logging.WARNING, logger="pi_evaluator.optimizer_driver"):
+        driver.run(trial_budget=5)
+    warnings = [
+        r for r in caplog.records if "per-run cost cap" in r.getMessage().lower()
+    ]
+    assert len(warnings) == 1
 
 
 def test_replicates_greater_than_one_not_yet_supported(tmp_path):
