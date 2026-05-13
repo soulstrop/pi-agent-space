@@ -1,3 +1,9 @@
+[tools]
+claude = "latest"
+pandoc = "latest"
+"pipx:weasyprint" = "latest"
+
+
 [tasks.setup]
 description = "Install dependencies in all subprojects"
 depends = ["setup-python"]
@@ -69,6 +75,3 @@ for src in docs/architecture/ARCHITECTURE.md docs/architecture/haskell.md docs/a
 done
 """
 
-[tools]
-pandoc = "latest"
-"pipx:weasyprint" = "latest"
