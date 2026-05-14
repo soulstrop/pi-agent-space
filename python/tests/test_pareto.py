@@ -153,3 +153,27 @@ def test_three_axis_tradeoff():
     assert _ids(
         pareto_frontier([token_winner, dollar_winner, quality_winner])
     ) == {"tokens", "dollars", "quality"}
+
+
+def test_add_to_frontier_incremental_update():
+    from pi_evaluator.domain.pareto import add_to_frontier
+
+    frontier = []
+    t1 = _trial("t1", tokens=100, dollars=0.1, quality=0.5)
+    frontier = add_to_frontier(frontier, t1)
+    assert _ids(frontier) == {"t1"}
+
+    # Dominated trial
+    t2 = _trial("t2", tokens=200, dollars=0.2, quality=0.4)
+    frontier = add_to_frontier(frontier, t2)
+    assert _ids(frontier) == {"t1"}
+
+    # Dominating trial
+    t3 = _trial("t3", tokens=50, dollars=0.05, quality=0.6)
+    frontier = add_to_frontier(frontier, t3)
+    assert _ids(frontier) == {"t3"}
+
+    # Non-dominating trial (tradeoff)
+    t4 = _trial("t4", tokens=10, dollars=0.5, quality=0.7)
+    frontier = add_to_frontier(frontier, t4)
+    assert _ids(frontier) == {"t3", "t4"}

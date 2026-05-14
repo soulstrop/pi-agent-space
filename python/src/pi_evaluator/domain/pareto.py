@@ -28,10 +28,31 @@ from .types import Metrics, Trial
 
 
 def pareto_frontier(trials: list[Trial]) -> list[Trial]:
-    eligible = [t for t in trials if _has_metrics(t)]
-    return [
-        t for t in eligible if not any(_dominates(other, t) for other in eligible)
-    ]
+    frontier: list[Trial] = []
+    for t in trials:
+        frontier = add_to_frontier(frontier, t)
+    return frontier
+
+
+def add_to_frontier(frontier: list[Trial], new_trial: Trial) -> list[Trial]:
+    """Incrementally update the Pareto frontier with a new trial.
+
+    Returns a new frontier list containing ``new_trial`` if it is non-
+    dominated, and removing any existing members it dominates.
+    """
+    if not _has_metrics(new_trial):
+        return frontier
+
+    # Optimization: if the new trial is dominated by any existing frontier
+    # member, the entire frontier remains unchanged.
+    if any(_dominates(f, new_trial) for f in frontier):
+        return frontier
+
+    # Otherwise, keep only members that are NOT dominated by the new trial,
+    # and add the new trial.
+    new_frontier = [f for f in frontier if not _dominates(new_trial, f)]
+    new_frontier.append(new_trial)
+    return new_frontier
 
 
 def _has_metrics(trial: Trial) -> bool:

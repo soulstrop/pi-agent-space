@@ -36,7 +36,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 
-from .domain.pareto import pareto_frontier
+from .domain.pareto import add_to_frontier, pareto_frontier
 from .domain.types import EvalSuiteRef, Trial, VersionVector
 from .ports.package_proposer_port import PackageProposerPort
 from .ports.persistence_port import PersistencePort
@@ -106,6 +106,9 @@ class OptimizerDriver:
         consecutive_errors = 0
         last_completed_at = self._monotonic_clock()
 
+        # Initial frontier from history
+        frontier = pareto_frontier(history)
+
         for _ in range(trial_budget):
             package = self._proposer.propose(history + new_trials)
             if package is None:
@@ -121,10 +124,9 @@ class OptimizerDriver:
             )
             new_trials.append(trial)
 
-            frontier_ids = [
-                t.trial_id for t in pareto_frontier(history + new_trials)
-            ]
-            self._persistence.save_frontier(frontier_ids)
+            # Incremental update: O(F) per trial where F is frontier size
+            frontier = add_to_frontier(frontier, trial)
+            self._persistence.save_frontier([t.trial_id for t in frontier])
 
             now = self._monotonic_clock()
             if trial.outcome == "completed":
@@ -172,9 +174,8 @@ class OptimizerDriver:
                     halted_reason = "per_run_cost_cap"
                     break
 
-        final_frontier = pareto_frontier(history + new_trials)
         return OptimizerResult(
             trials=new_trials,
-            frontier_trial_ids=[t.trial_id for t in final_frontier],
+            frontier_trial_ids=[t.trial_id for t in frontier],
             halted_reason=halted_reason,
         )
