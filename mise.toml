@@ -1,5 +1,6 @@
 [tools]
 claude = "latest"
+gemini = "latest"
 pandoc = "latest"
 "pipx:weasyprint" = "latest"
 "aqua:gastownhall/beads" = "latest"
