@@ -1,8 +1,16 @@
 # pi-agent-space
 
-**pi-agent-space** is a Bayesian combinatorial-optimization system that searches for high-performing **packages** — bundles of skills, prompts, workflows, foundation-model selections, and configuration values that plug into Pi's extension surface.
+The elements that influence an AI agent's performance—foundation models of varying sizes and lineages, specialized skills, complex workflows, and diverse training protocols—are advancing at a breakneck pace. Keeping up with these delivered innovations and trying to figure out what yields better performance often means dealing with an overwhelming combinatorial explosion. Standard benchmarks exist, but there isn't necessarily a way to relate them directly to a developer's specific problem domain.
 
-By treating the "builder harness" (Pi) and the "user harness" (the package) as a composed system, this project optimizes the agent's behavior against a graduated problem suite to find configurations on the Pareto frontier of trade-offs like tokens used, dollars spent, scaling slope across problem difficulties, and overall quality.
+**pi-agent-space** is a system designed to efficiently and systematically explore this multidimensional space. By treating the "builder harness" (the Pi platform) and the "user harness" (the package of skills, prompts, and models) as a composed system, this project optimizes the agent's behavior against a graduated problem suite. It finds configurations on the Pareto frontier of trade-offs, like tokens used, dollars spent, scaling slope across problem difficulties, and overall quality.
+
+## Supported Scenarios
+
+This shared exploration space is designed to support three core deployment scenarios:
+
+1. **The Individual Developer (Ad Hoc):** A developer hears about a new model or tool and wants to quickly try it out. They need fast A/B testing (in minutes) to get a feel for whether it's an improvement or just noise, and to understand the shape of the trade-offs.
+2. **Strategic Pre-Exploration (Deep-Pocketed Organization):** An organization explores the massive combinatorial space upfront before large-scale rollout. Operating under a budget cap, the goal is to find the "golden" configuration and build a persistent knowledge asset (a surrogate model) that maps out the cost-quality frontier.
+3. **Evolutionary Fleet Management (Large Organization):** A mature deployment runs experiments with slight variations on packages through regular updates. By gathering multimodal online feedback (user ratings, derived metrics, and "golden" signals like signed contracts), the system establishes an organizational feedback loop that steadily increases agent performance over time, eventually evolving toward segmented, highly-personalized packages.
 
 ## Project Structure
 
