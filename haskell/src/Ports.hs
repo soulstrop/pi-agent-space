@@ -1,6 +1,12 @@
 {-# LANGUAGE EmptyDataDecls #-}
 module Ports where
 
+import AgentSpace (Metrics)
+-- ^ Re-use the categorical-layer types whose shape is load-bearing.
+-- 'Metrics' carries the 4-axis objective record committed by ADR 0005;
+-- 'Outcome' (also in AgentSpace) is the sum type from math.pdf eq. 6
+-- and ADR 0007. Re-declaring either here would be silent drift.
+
 -- ============================================================================
 -- Ports: the domain-flavored cut
 -- ============================================================================
@@ -32,21 +38,34 @@ module Ports where
 -- (Bockeler), and docs/implementation-plan.md for the v1 R&D path.
 
 -- ----------------------------------------------------------------------------
--- Placeholder types
+-- Placeholder types — IO-edge / domain-record concerns below the math
 -- ----------------------------------------------------------------------------
--- Placeholders for the broader Haskell drift backport (Package as user
--- harness + model; Trial as event stream; capability profile; objective/
--- subjective scoring split). They exist here only to make the port shapes
--- concrete enough to evaluate.
+-- These are empty data declarations on purpose. They sit below the
+-- categorical abstraction this DSL exercises: the math.pdf framework treats
+-- @Package@ as an opaque parameter @p@ in @Para(C)@, @RawTelemetry@ as an
+-- adapter-specific artifact, @GraduatedProblem@ as IO-loaded data, etc.
+-- Fleshing them into Python-mirroring records adds no categorical content
+-- and risks Python-Haskell drift; structural verification of these records
+-- lives in Python per ADR 0001.
+--
+-- Types whose shape DOES matter to the math live in AgentSpace.hs and are
+-- imported above: 'Metrics' (the 4D objective-metrics record per ADR 0005)
+-- and 'Outcome' (the sum type per math.pdf eq. 6 / ADR 0007). Re-declaring
+-- either here would be drift; the alias below preserves the descriptive
+-- 'ObjectiveMetrics' name in port signatures without duplicating structure.
 
 data Package           -- user harness instance + model selection (Bockeler)
 data GraduatedProblem  -- one validatable problem in a suite
 data RawTelemetry      -- agent's raw output: events, exit code, generated artifacts
-data ObjectiveMetrics  -- tokens, dollars, validation pass rate, quality (computational scoring; ADR 0005 splits cost into tokens + dollars). Per ADR 0006 the (config, problem) -> ObjectiveMetrics map is non-deterministic with input-dependent variance, modeled by a heteroscedastic GP.
 data SubjectiveScore   -- human / LLM-judge rating + notes (inferential scoring; arrives async)
-data Outcome           -- ADR 0007 sum: Completed ObjectiveMetrics | BoundaryViolation ObjectiveMetrics | ErrorEscalated. The optimizer's surrogate sees the Completed and BoundaryViolation projections; ErrorEscalated trials are preserved for asynchronous human classification.
-data Trial             -- (package, problems, versionVector, events, outcome :: Outcome)
+data Trial             -- domain-level trial record (package, problems, versionVector, events, outcome). Broader than AgentSpace.Trial, which carries only (config, outcome) for the categorical layer.
 data History           -- materialized trial history seen by the proposer
+
+-- | ObjectiveMetrics keeps the descriptive name in port signatures and
+-- reuses the categorical 'Metrics' structure. The (config, problem) →
+-- ObjectiveMetrics map is non-deterministic per ADR 0006 with input-
+-- dependent variance, modeled by a heteroscedastic GP.
+type ObjectiveMetrics = Metrics
 
 -- ============================================================================
 -- Domain-flavored ports
