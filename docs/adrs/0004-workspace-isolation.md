@@ -1,6 +1,6 @@
 # Title: 0004 - Workspace Isolation Strategy
 
-**Status:** Accepted
+**Status:** Accepted (Reconsider Trigger "Concurrent trials / network isolation per trial" superseded by [ADR 0009](0009-trial-isolation-boundary.md))
 
 ## Context
 

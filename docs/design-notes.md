@@ -221,3 +221,21 @@ The driver-level `retry_budget` parameter (`OptimizerDriver.__init__`) remains d
 When `retry_budget` exhausts without success, the adapter returns the last attempt's `RawTelemetry` verbatim. The trial runner's `_classify_outcome` rule sees this and tags the trial `error_escalated`, satisfying ADR 0007's "persistent errors preserve and queue" commitment (the trial directory is already on disk, so preservation is automatic — a dedicated preservation queue is not part of this chunk). Tests that intentionally exercise failure paths must opt out with `retry_budget=0` to avoid 90-second real-time backoff waits; the production-quality default (2 retries, 30/60s backoff) is what unattended runs need.
 
 **Related:** [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md); `python/tests/test_cli_subprocess_adapter.py::test_retries_*`, `test_default_retry_budget_is_two`, `test_returns_last_failure_after_retry_budget_exhausted`, `test_retries_use_same_materialized_workspace`.
+
+---
+
+### Trial isolation: SandboxPort, NullSandbox default, BwrapSandbox opt-in
+
+**Where:** `python/src/pi_evaluator/ports/sandbox_port.py`; `python/src/pi_evaluator/adapters/sandbox.py`; `python/src/pi_evaluator/adapters/cli_subprocess_adapter.py` (`__init__` `sandbox` parameter; `_run_once` invocation routing).
+
+**Decision:** Isolation is a port (`SandboxPort.wrap(cmd, workspace, env) -> SandboxedInvocation`) rather than a hard-coded mechanism inside the adapter. `CliSubprocessAdapter`'s default is `NullSandbox` (identity), so Phase 1–3 behavior is preserved at every existing call site. `BwrapSandbox` is the v1 real-isolation implementation; the same port shape will admit a container implementation when Phase 4+ deployment scenarios force the question (ADR 0009).
+
+The bwrap recipe deliberately **omits `--unshare-user`**. Ubuntu 24.04+ kernels default to `kernel.apparmor_restrict_unprivileged_userns=1`, which blocks bwrap's user-namespace setup even when only filesystem isolation is requested — the entire sandbox fails with `bwrap: setting up uid map: Permission denied`. The threats ADR 0009 addresses (measurement integrity, credential exposure, resource bounds) do not require uid-mapping protection; dropping the flag preserves the rest of the recipe under hardened kernels. Filesystem confinement, env scrubbing, and pid/ipc/uts/cgroup namespacing all still apply.
+
+The env allowlist is **explicit and short** (`PATH`, `LANG`, `LC_ALL`, `TERM`, `TZ`, four well-known model API key names, `PI_*` prefix). `HOME` is **not** on the allowlist; instead, `BwrapSandbox` sets `HOME=/tmp/home` inside the sandbox and mounts a tmpfs there. This is the load-bearing safety property: the real home directory is never bind-mounted, so `~/.ssh`, `~/.aws`, `~/.config/gh`, and dotfiles holding tokens are simply unreachable. New provider keys (e.g., `MISTRAL_API_KEY`) require an explicit constructor argument — opt-in by name rather than blanket forwarding.
+
+`bwrap_available()` is a **functional** probe, not a binary-presence check: it runs `bwrap --ro-bind /usr /usr /bin/true` and returns True only if that exits cleanly. The integration tests in `test_sandbox.py` skip via this probe so AppArmor-restricted hosts get clean skips rather than confusing failures.
+
+**Validation steps are not sandboxed in v1.** Per ADR 0004, graduated-problem validation commands are trusted code from the project's own repo. They execute *after* the trial, against workspace contents the agent may have written — so validation tooling running over agent-authored files (e.g., `pytest` on an agent-created test) is a real but secondary risk. Sandboxing validation forces extra decisions (shell semantics across binds, validation needing non-workspace paths) and is deferred until evidence of exploitation, not speculation.
+
+**Related:** [ADR 0009 — Trial Isolation Boundary](adrs/0009-trial-isolation-boundary.md); [ADR 0004 — Workspace Isolation](adrs/0004-workspace-isolation.md); `python/tests/test_sandbox.py`.

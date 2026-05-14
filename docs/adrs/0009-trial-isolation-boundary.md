@@ -1,0 +1,197 @@
+# Title: 0009 - Trial Isolation Boundary
+
+**Status:** Proposed
+
+*Spike in progress; decision target Phase 3.5.1.*
+
+## Context
+
+ADR 0004 chose `tmpdir copy` for v1 workspace isolation, explicitly accepting that "filesystem isolation [is] only inside the tmpdir … network is fully open … process namespace is shared … no CPU / memory / disk caps." Those acceptances were correct given the v1 profile but were always provisional — ADR 0004's *Reconsider Triggers* enumerate the conditions that would force the question.
+
+External code review (beads `pi-agent-space-j8x`) re-raised the gap precisely:
+
+> Agents are not isolated; they run as the same user and on the same host as the evaluator, with full access to the filesystem beyond the temporary workspace copy.
+
+This ADR reframes the question — from "is isolation worth the operational cost?" to "what is the *threat model*, what mechanism family addresses it, and what does the chosen mechanism demand of the deployment host?" — and chooses a v1 isolation strategy that ratchets ADR 0004's tmpdir baseline up one level without taking on container infrastructure.
+
+### Threat model
+
+Three distinct concerns were being conflated under "isolation." Naming them separately is what makes the decision tractable.
+
+**1. Measurement integrity (load-bearing for the project goal).** The project's stated purpose is honest capability profiling across `(package, problem)` cells. An agent that can read prior trials' workspaces, the evaluator's bookkeeping, the eval suite's expected outputs, or cached state from previous runs will produce numbers that are correlated with *what the host happens to contain* rather than the package's actual capability. As N grows in Phase 4, this contamination compounds — and is invisible from the trial outputs alone.
+
+**2. Safety / credential exposure.** The evaluator's environment carries `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `~/.ssh`, `~/.config/gh`, dotfiles, and whatever else the developer has lying around. Pi has a `bash` tool and a model that can be prompted (or prompt-injected via problem text) into `env | curl`, `cat ~/.aws/credentials`, etc. The per-trial probability of harm is low; cumulative probability across the high-N runs Phase 4+ requires is not.
+
+**3. Resource bounds.** Cost cap enforcement (ADR 0005) is wallclock + token accounting at the optimizer layer. It does not bound CPU, memory, disk, file-descriptor count, or *detached processes* spawned by the agent. A backgrounded process can outlive the trial and continue consuming resources unaccounted-for in the trial's telemetry.
+
+The first concern is the one that pushes this from "hygiene" to "load-bearing." Even if we trusted the LLM completely, measurement integrity demands isolation.
+
+### Mechanism families
+
+Isolation mechanisms cluster into three architectural families that address the threat model by different means:
+
+* **Namespace-based.** Use Linux kernel namespaces (mount, pid, ipc, uts, cgroup, optionally user) to give the agent a restricted view of the host. The agent runs as the evaluator's uid but cannot see what isn't bind-mounted, what isn't in its pid namespace, etc. *bwrap*, *unshare*, *firejail* are the standard tools; rootless containers are the same family at heavier weight.
+* **UID-based.** Use traditional Unix permissions to deny access. Run the agent as a distinct user account whose privileges don't cross over the evaluator's files. Permissions are the *only* fence — there is no kernel-level restriction of what the agent can `stat`/`open`/`connect`, just the ordinary mode-bit and ownership checks.
+* **Defense-in-depth.** Stack namespace-based isolation inside a UID-based wrapper. The threat model is closed by *either* mechanism failing alone; both have to fail to expose anything.
+
+Each family makes different demands on the deployment host. The choice is genuinely a *deployment-scenario* question, not purely a code question, which is why this ADR separates the mechanism decision from the deployment-requirement decision.
+
+## Options Considered
+
+### Option 1: Status quo (tmpdir copy only, ADR 0004 v1)
+
+* **Pros:** Zero new dependencies; works on macOS and Linux symmetrically.
+* **Cons:** Addresses none of the three threats. As Phase 4 expands trial counts, all three compound.
+
+### Option 2: Namespace-based via bwrap (bubblewrap)
+
+The adapter prepends a `bwrap` invocation in front of `pi …`. Recipe (see `python/src/pi_evaluator/adapters/sandbox.py`):
+
+* Read-only bind of `/usr` and via `--ro-bind-try` `/etc /lib /lib64 /lib32 /bin /sbin /opt` — the agent sees a standard system view but cannot mutate it.
+* `--proc /proc`, `--dev /dev`, `--tmpfs /tmp` — minimal kernel-interface mounts.
+* `--dir /tmp/home` plus `HOME=/tmp/home` in the env — agent's `$HOME` resolves to a tmpfs; **the real home directory is never bound**, so `~/.ssh`, `~/.aws`, `~/.config/gh` are simply not reachable.
+* `--bind <workspace> <workspace>` and `--chdir <workspace>` — workspace is read-write at the *same path* it has on the host, so validation steps running outside the sandbox observe the same tree.
+* `--unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup` — process, SysV IPC, hostname, and cgroup namespaces are unshared.
+* `--unshare-user` is **not** in the default recipe (see "Bwrap deployment requirements" below).
+* Network is **not** unshared — Pi must reach the model API.
+* `--die-with-parent` — sandboxed processes terminate when the adapter exits, eliminating orphan-process resource leaks.
+* Environment is filtered to an allowlist (`PATH`, `LANG`, `LC_ALL`, `TERM`, `TZ`, the four well-known model API keys, anything matching `PI_*`). Everything else — `AWS_*`, `GITHUB_TOKEN`, secrets the developer may have set — never enters the sandboxed process.
+
+* **Pros:** Addresses all three threats. ~10 ms startup overhead (vs. seconds for containers). No daemon; no image lifecycle. The implementation is ~140 lines including the port abstraction. Compatible with the individual-user deployment scenario.
+* **Cons:** Linux-only. Bwrap itself requires user-namespace setup *even when* `--unshare-user` is not requested — a kernel-level prerequisite (see "Bwrap deployment requirements") which not every Linux host grants by default. Process listings still show the agent as the evaluator's uid, which is fine for isolation but means traditional Unix tools (`top -u`, `ps -u`) cannot single out the agent.
+
+### Option 3: UID-based via dedicated user account (`pi_trial:pi_trials`)
+
+A dedicated unprivileged user account `pi_trial` runs the agent. The evaluator (the developer's user) invokes Pi through `sudo -u pi_trial --preserve-env=PATH,GEMINI_API_KEY,…` after chowning the materialized workspace to `pi_trial:pi_trials`. Traditional Unix permissions become the isolation fence:
+
+* `~mikeco/.ssh` is mode 0700 owned by `mikeco`; `pi_trial` cannot read it.
+* Prior trial workspaces, if left as `pi_trial:pi_trials` mode 0700, are invisible to subsequent trials (each gets its own tmpdir).
+* `TMPDIR` is overridden to a `pi_trial`-owned directory mode 0700, so `/tmp` cross-talk is eliminated.
+* `HOME` is set to a `pi_trial`-owned home directory (or `/tmp/<workspace>` to avoid persistent state).
+* Environment scrubbing is free via `--preserve-env`'s allowlist behavior.
+* Validation steps run as the evaluator's user against workspace contents owned by `pi_trial`; group-rwx with the evaluator joining `pi_trials` is the cleanest fit.
+
+* **Pros:**
+  * **No kernel-namespace dependency, no AppArmor entanglement.** The mechanism is decades-old Unix permission checking.
+  * Smaller kernel attack surface — uid-check code is older and better-audited than namespace-setup code.
+  * Process-listing transparency — `ps -u pi_trial` shows exactly what the agent is doing; useful for debugging and for operator situational awareness.
+  * Composes naturally with cgroup-v2 for resource limits (`systemd-run --user --uid=pi_trial -p MemoryMax=…`) without needing userns.
+  * Cross-mechanism portability: the model translates to any Unix; bwrap is Linux-only.
+* **Cons:**
+  * **No process-namespace isolation.** The agent can `ps -ef` and see everything else running on the host — a measurement-integrity concern if other trials are concurrent (kernel mount option `hidepid=2` on `/proc` mitigates partially).
+  * **No filesystem-tree confinement.** Anything world-readable (`/etc/passwd`, system config, world-readable user files) is visible. Bwrap hides everything not explicitly bound; this option hides only what permissions deny.
+  * **No process-tree death guarantee.** Detached `pi_trial`-owned processes survive the trial unless the adapter explicitly enumerates and kills them by uid.
+  * Higher per-host operational footprint: user/group creation, sudoers rules (`mikeco ALL=(pi_trial) NOPASSWD: <pi binary>` plus a narrow chown rule for the workspace ownership transition), workspace permission management.
+  * Sudoers is itself a security surface — getting the rule too broad creates new exposure.
+
+### Option 4: Defense-in-depth (bwrap inside `sudo -u pi_trial`)
+
+Stack Options 2 and 3. The agent runs as `pi_trial` *and* inside a bwrap sandbox.
+
+* **Pros:** No single misconfiguration breaks the threat model. Process listings clearly identify trial processes (Option 3 benefit). Filesystem-tree confinement is strong (Option 2 benefit). The pi_trial account's distinct AppArmor context may also sidestep the bwrap userns restriction depending on how the host's AppArmor profile is keyed — needs verification per host.
+* **Cons:** Sum of both setup costs. The marginal threat coverage over Option 2 alone is modest for the individual-user deployment scenario; the value shows up at higher trust-sensitivity scenarios.
+
+### Option 5: Container-based (Docker / Podman per trial)
+
+The same `SandboxPort` shape is satisfied by `docker run -v workspace:workspace ... cmd`.
+
+* **Pros:** Strongest of the lightweight options. Cross-platform (Linux, macOS via Docker Desktop, Windows). Image pinning gives reproducibility (ADR 0006 territory). Rootless Podman avoids the daemon.
+* **Cons:** 1–2 s cold-start per trial (significant at Phase 4 N). Daemon dependency for Docker; image build/lifecycle to manage. Heavier ops floor — the individual-user deployment scenario takes a real cost hit. Rootless Podman has its own userns dependency, so it inherits Option 2's "Bwrap deployment requirements" question in a different guise.
+
+### Option 6: macOS `sandbox-exec` + bwrap on Linux behind a unified port
+
+* **Pros:** Symmetric dev loop across platforms.
+* **Cons:** `sandbox-exec` is deprecated by Apple (still works, no replacement). Profile language is fiddly and per-host. The semantics aren't quite the same — would need careful test coverage on both. Higher complexity for marginal portability gain in v1.
+
+### Option 7: microVM (Firecracker / gVisor / Kata)
+
+* **Pros:** Strongest isolation available.
+* **Cons:** Overkill for the threat model; high startup cost; ops-heavy. Out of scope for v1.
+
+## Bwrap deployment requirements
+
+Option 2 (and Option 4 to the extent it includes bwrap) requires the host kernel to permit `bwrap`'s user-namespace setup. **Bwrap uses user namespaces internally regardless of whether `--unshare-user` is requested** — this is how it implements `--bind` and similar without root privilege. On hosts where unprivileged user namespaces are restricted, bwrap fails with `bwrap: setting up uid map: Permission denied` before any sandboxing takes effect.
+
+The most common restriction is Ubuntu 24.04+'s default `kernel.apparmor_restrict_unprivileged_userns=1`, which uses AppArmor to deny unprivileged userns to processes lacking an explicit grant. The operator picks one of three enablement paths:
+
+### Family 1.A — Disable the AppArmor restriction system-wide
+
+```
+echo 'kernel.apparmor_restrict_unprivileged_userns = 0' \
+  | sudo tee /etc/sysctl.d/60-allow-userns.conf
+sudo sysctl --system
+```
+
+* **Pros:** One line; restores pre-24.04 behavior; works for any tool that wants userns.
+* **Cons:** Removes the hardening ratchet for *all* processes on the host. Acceptable on a developer workstation under the individual-user deployment scenario; unacceptable on a managed enterprise host.
+
+### Family 1.B — Install an AppArmor profile for bwrap (recommended)
+
+A targeted profile grants the `userns,` capability only to processes executing `/usr/bin/bwrap`. The rest of the host's AppArmor enforcement stays in place. See the "Operator instructions" appendix below for the profile body and the load command.
+
+* **Pros:** Surgical; aligned with how Ubuntu's hardening team expects the restriction to be relaxed; reversible per-profile.
+* **Cons:** One-time setup per host; AppArmor profile syntax has its own gotchas (especially on multi-host deployments via configuration management).
+
+### Family 1.C — Setuid bwrap
+
+```
+sudo chmod u+s /usr/bin/bwrap
+```
+
+* **Pros:** Bwrap was originally designed to run setuid; the design is hardened against the obvious privilege-escalation paths.
+* **Cons:** Adds a setuid binary to the host's audit surface. Distros have generally moved away from this in favor of Family 1.A or 1.B, so it's the least-aligned with current Linux conventions.
+
+## Decision
+
+**Mechanism: Option 2 (namespace-based via bwrap), behind a new `SandboxPort` abstraction.**
+
+The port shape — `wrap(cmd, workspace, env) -> SandboxedInvocation` — is satisfied equally well by Option 3 (`sudo -u pi_trial …`), Option 4 (the combination), Option 5 (`docker run -v …`), or Option 6 (`sandbox-exec …`). When future deployment scenarios force the question, replacing `BwrapSandbox` with one of these implementations is **adapter-internal**; the `AgentHarnessPort` contract, the optimizer driver, and the trial runner are untouched.
+
+Bwrap is chosen over the UID-based and container alternatives for v1 because:
+
+1. It addresses **all three threats** at once (Option 3 leaves process-namespace and filesystem-tree gaps; the container option pays for stronger isolation than v1 needs at multi-second-per-trial cost).
+2. The implementation is **~140 lines** including the port abstraction; the operational footprint is "install bwrap and pick a Family 1 enablement option."
+3. It composes with Option 3 later if defense-in-depth becomes necessary, without throwing the bwrap code away.
+
+**Default for `CliSubprocessAdapter` remains `NullSandbox`** (the identity sandbox, preserving Phase 1–3 behavior). Callers opt into `BwrapSandbox` explicitly. This:
+
+* Keeps existing tests untouched (no behavior change at the default).
+* Keeps the dev loop working on macOS and on Linux hosts that haven't completed Family 1 setup (the explicit opt-in fails loudly with a real bwrap error, not a silent regression).
+* Makes the isolation choice a deliberate decision at the wiring point, not an invisible default.
+
+**Deployment requirement: each host running BwrapSandbox must complete one of Family 1.A / 1.B / 1.C.** The project's documentation recommends Family 1.B (targeted AppArmor profile) as the default. Family 1.A is acceptable for individual-user workstations. Family 1.C is acceptable but not preferred.
+
+### Scope
+
+* **Pi invocation is sandboxed.** The adapter routes the `pi …` command through the sandbox port.
+* **Validation steps are not sandboxed in v1.** Per ADR 0004, graduated-problem validation commands are trusted code from the project's own repo. They run after the trial; they read workspace contents the agent may have written. The risk surface (validation tooling executing agent-authored content — e.g., `pytest` running a test file the agent created) is real but secondary, and isolating validation introduces its own complications (shell semantics across `--bind` views, validation steps that need network or non-workspace paths). Tracked as a follow-up.
+* **Network is preserved.** Pi requires it. A future tightening (egress-only to the model API endpoint) is possible but not v1.
+* **User namespace unsharing is not in the default recipe.** Compatibility with hardened Linux kernels takes priority; the threats this ADR addresses do not require uid-mapping protection.
+
+## Reconsider Triggers
+
+Move from `BwrapSandbox` to a different family (or stack them per Option 4) when any of these hold:
+
+* **A managed deployment host refuses Family 1 enablement.** If an enterprise environment will not permit the AppArmor relaxation, the setuid bwrap binary, or the sysctl flip, Option 3 (UID-based via `pi_trial`) becomes the natural fit. The mechanism has no kernel-feature dependency at all.
+* **Cross-platform symmetry becomes mandatory.** If the macOS dev loop needs to behave the same as production trial runs (currently macOS falls back to `NullSandbox`), containers via Docker Desktop / Podman (Option 5) are the obvious fix.
+* **Enterprise A/B deployment scenario activates.** The deployment-scenarios memory describes a future mode where many desks emit trials concurrently. That mode wants network egress controls, audited resource caps, and image-pinned reproducibility — natural fits for Options 4 (defense-in-depth) or 5 (containers).
+* **Image-pinned reproducibility becomes a requirement (ADR 0006 territory).** Container images pin the runtime environment in a way bwrap does not.
+* **Validation-step taint becomes a concern.** If validation tooling running over agent-authored workspace contents proves to be a real exposure (not speculative), sandboxing validation forces a re-think of the workspace topology — a container with separate mount layers handles this more naturally than bwrap.
+* **Operator audit-trail demand.** If "what processes did the trial spawn, and as what uid" becomes an audit requirement, Option 3 or 4 provides it natively in process listings; bwrap alone does not.
+
+## Consequences
+
+* **`AgentHarnessPort` contract is unchanged.** Optimizer, trial runner, and persistence are untouched.
+* **`CliSubprocessAdapter` constructor gains one optional parameter** (`sandbox: SandboxPort | None`). Default `None` resolves to `NullSandbox`, preserving Phase 1–3 behavior.
+* **The materialized workspace path is stable across the sandbox boundary.** `BwrapSandbox` binds the host workspace at the same path inside the sandbox (`--bind X X`), so absolute paths in the workspace remain valid and validation steps running outside the sandbox observe the same tree the agent wrote to.
+* **The agent cannot see the evaluator's `$HOME`.** This is the most consequential single property — it kills the credential-exposure threat for any secret the evaluator carries outside the explicit allowlist.
+* **The agent cannot see other trials' workspaces.** Measurement integrity threat is closed at the filesystem level. (Network-side contamination — e.g., a model provider caching responses between trials — is out of scope of this ADR.)
+* **Each deployment host must complete a Family 1 enablement step.** The project documents Family 1.B as default; the operator-instructions appendix below carries the profile and load commands.
+* **Tests gracefully skip integration cases** when bwrap cannot create a sandbox on the host (functional `bwrap_available()` probe). Argv-shape unit tests cover the sandbox contract without requiring bwrap to actually execute.
+* **Re-running Phase 3.5 acceptance with `BwrapSandbox`** is the natural validation step before Phase 4. Out of scope for this ADR's commit; tracked as the next step in the implementation plan.
+
+## Related
+
+* Supersedes ADR 0004's *Reconsider Triggers* item "Concurrent trials / network isolation per trial."
+* Closes beads `pi-agent-space-j8x` once `BwrapSandbox` is wired into the acceptance-test path.
+* `docs/design-notes.md` carries the recipe-detail rationale (HOME tmpfs, no-unshare-user choice, env allowlist composition).

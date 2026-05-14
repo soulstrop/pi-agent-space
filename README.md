@@ -54,25 +54,4 @@ Later phases add async subjective scoring (Phase 5) and a Heteroscedastic GP sur
 
 ## Contributing
 
-We welcome contributions! This project is heavily driven by **Test-Driven Development (TDD)** and is organized in independent, verifiable steps. 
-
-### Getting Started
-
-1.  **Tooling:** We use [`mise`](https://mise.jdx.dev/) as our task runner and tool manager. The Python environment is managed via `uv` / `hatchling`.
-2.  **Setup the workspace:** 
-    ```bash
-    mise run setup
-    ```
-3.  **Run tests and checks:**
-    You can run tests, linting, and formatting from the repository root:
-    ```bash
-    mise run test
-    mise run lint
-    mise run format
-    mise run typecheck
-    ```
-    *(You can also run Python-specific tasks directly, like `mise run test-python`).*
-4.  **TDD Workflow:** When picking up a step from `docs/implementation-plan.md`, always follow the Red-Green-Refactor cadence. Write a failing test first, make it pass with minimal code, and then refactor for clarity.
-5.  **Documentation:** Before making structural changes, check `docs/adrs/` or `docs/implementation-plan.md` to ensure alignment with the architectural direction.
-
-For a deeper technical overview of the domain types and adapter boundaries, start by reading [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md).
+We welcome contributions! Setup, test workflows, TDD conventions, and pointers to the technical architecture are in the [contributors guide](docs/guides/contributors/README.md). Operators deploying or running trials should start from the [operators guide](docs/guides/operators/README.md).

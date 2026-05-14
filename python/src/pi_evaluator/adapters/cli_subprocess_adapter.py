@@ -25,6 +25,8 @@ from pathlib import Path
 from ..domain.test_suite import GraduatedProblem, ValidationStep
 from ..domain.types import Package, RawTelemetry, ValidationResult
 from ..ports.agent_harness_port import AgentHarnessPort
+from ..ports.sandbox_port import SandboxPort
+from .sandbox import NullSandbox
 from .workspace import materialize_workspace
 
 DEFAULT_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (30.0, 60.0)
@@ -44,11 +46,13 @@ class CliSubprocessAdapter(AgentHarnessPort):
         retry_budget: int = 2,
         backoff_seconds: tuple[float, ...] = DEFAULT_RETRY_BACKOFF_SECONDS,
         sleep: Callable[[float], None] = time.sleep,
+        sandbox: SandboxPort | None = None,
     ) -> None:
         self._pi = pi_binary
         self._retry_budget = retry_budget
         self._backoff_seconds = backoff_seconds
         self._sleep = sleep
+        self._sandbox: SandboxPort = sandbox if sandbox is not None else NullSandbox()
 
     def run(
         self,
@@ -89,9 +93,11 @@ class CliSubprocessAdapter(AgentHarnessPort):
         if package.skills:
             cmd.extend(["--tools", ",".join(package.skills)])
         cmd.append(problem.prompt)
+        sandboxed = self._sandbox.wrap(cmd, workspace=materialized)
         proc = subprocess.run(
-            cmd,
-            cwd=str(materialized),
+            sandboxed.cmd,
+            cwd=str(sandboxed.cwd),
+            env=sandboxed.env,
             capture_output=True,
             text=True,
             check=False,
