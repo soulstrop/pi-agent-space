@@ -33,11 +33,25 @@ data Outcome
     | ErrorEscalated
 ```
 
-### 3. The Truth (Python)
-In production, we realize this as a `Literal` and optional fields. The math provides the "linter" that tells us why we need `_has_metrics`.
+### 3. The Truth (Python Context)
+In production, the "Pure" sum type from Haskell meets the "Impure" world of filesystem I/O and list-processing. The math provides the filtering logic that makes this messy code predictable.
 
 ```python
-Outcome = Literal["completed", "boundary_violation", "error_escalated"]
+# Context: Loading and filtering trials for the Pareto frontier
+def load_and_filter_trials(storage_path: Path) -> list[Metrics]:
+    # 1. Messy I/O (The "Real World")
+    raw_trials = [Trial.load(p) for p in storage_path.glob("trial_*")]
+    
+    # 2. The Implementation of the Projection (pi)
+    # We use a list comprehension to filter for branches that carry signal.
+    # completed | boundary_violation => signal
+    # error_escalated | None         => noise
+    return [
+        t.final_metrics 
+        for t in raw_trials 
+        if t.outcome in ("completed", "boundary_violation")
+        and t.final_metrics is not None
+    ]
 ```
 
 ---
@@ -65,15 +79,24 @@ flowchart LR
 The `AgentGraph` GADT uses Haskell's type system to "wire" these boxes together safely.
 
 ```haskell
+-- Proof of a parallel sub-agent workflow
 coordinator = Copy >>> (Haiku *** Opus) >>> MergeStrings
 ```
 
-### 3. The Truth (Python)
-Python realizes this as the `Package` configuration. 
+### 3. The Truth (Python Context)
+While Haskell verifies the *wiring*, the Python implementation manages the *execution*—handling asynchronous calls, networking, and state.
 
 ```python
-@dataclass
-class Package:
-    skills: list[str]
+# Context: Executing the parallel workflow verified in Haskell
+async def execute_coordinator_workflow(prompt: str, context: list[str]):
+    # realization of: Copy >>> (Haiku *** Opus)
+    # The Tensor Product (***) manifests as asyncio.gather
+    haiku_task = run_model("haiku", prompt, context)
+    opus_task = run_model("opus", prompt, context)
+    
+    # Run in parallel (The monoidal 'side-by-side' property)
+    haiku_out, opus_out = await asyncio.gather(haiku_task, opus_task)
+    
+    # realization of: >>> MergeStrings
+    return f"{haiku_out}\n{opus_out}"
 ```
-*(In Phase 5, this will become a serialized execution graph mirroring the Haskell structure.)*

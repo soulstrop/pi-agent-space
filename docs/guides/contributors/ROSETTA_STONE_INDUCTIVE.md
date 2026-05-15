@@ -12,22 +12,31 @@ This version is for developers who want to start with the code they know and see
 **The Python Intuition:** We need to know if a trial succeeded or crashed so we can filter our data.
 **Analogy:** The `Result` type in Rust or `Either` in modern Python.
 
-### 1. The Truth (Python)
-We use a `Literal` and optional fields to track the status. We have to manually remember to check `outcome` before using `final_metrics`.
+### 1. The Truth (Python Context)
+We start with the "Real World" problems: messy I/O, asynchronous network calls, and defensive filtering. 
 
 ```python
-# Truth: Simple enums and checks
-Outcome = Literal["completed", "boundary_violation", "error_escalated"]
-
-if trial.outcome != "error_escalated":
-    process(trial.final_metrics)
+# The Messy Reality: Loading and filtering trials
+def analyze_results(storage_path: Path):
+    # 1. IO/Globbing
+    paths = storage_path.glob("trial_*/final.json")
+    
+    # 2. Defensive Filtering (The "Intuition")
+    # We want to ignore crashes (error_escalated) and only see metrics
+    # from runs that actually produced a result.
+    valid_results = []
+    for p in paths:
+        data = json.load(p.open())
+        if data["outcome"] != "error_escalated":
+            valid_results.append(data["metrics"])
+    return valid_results
 ```
 
 ### 2. The Verification (Haskell)
-We take that intuition and make it a **Type**. Now, the compiler *forces* us to handle the error case. You cannot even "see" the metrics unless you are in a valid branch.
+We take that "Defensive Filtering" intuition and make it a **Type**. Instead of manual `if/else` checks, the Haskell compiler *forces* us to handle the logic. 
 
 ```haskell
--- Verification: The data structure enforces the logic
+-- Verification: The data structure enforces the filtering logic
 data Outcome
     = Completed Metrics
     | BoundaryViolation Metrics
@@ -44,15 +53,23 @@ We generalize this into a **Coproduct** ($\amalg$). This is the math of "mutual 
 **The Python Intuition:** We want to chain tools together or run them in parallel.
 **Analogy:** Middleware in FastAPI or Pipes in a shell.
 
-### 1. The Truth (Python)
-Currently, we store a simple list of `skills`. The agent "knows" how to use them.
+### 1. The Truth (Python Context)
+In the "Real World," parallel workflows are handled by `asyncio.gather`. It's powerful but easy to "miswire" (e.g., passing the output of `Haiku` to something that expects `Opus`'s schema).
 
 ```python
-package = Package(skills=["linter", "test-runner"])
+# The Messy Reality: Coordinating sub-agents
+async def run_sub_agents(prompt, context):
+    # Parallel execution with asyncio
+    haiku_res, opus_res = await asyncio.gather(
+        haiku_explore(prompt, context),
+        opus_plan(prompt, context)
+    )
+    # Manual string merging
+    return f"Explore: {haiku_res}\nPlan: {opus_res}"
 ```
 
 ### 2. The Verification (Haskell)
-We formalize how these skills "plug in" to each other using **Arrows**. This prevents "wiring bugs" (e.g., trying to pass a list into a function that expects a string).
+We formalize how these skills "plug in" to each other using **Arrows**. This prevents "wiring bugs" before the code even runs.
 
 **Visualization: The Typed Wire**
 ```mermaid
