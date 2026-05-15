@@ -4,6 +4,8 @@
 
 This document orients new readers (and LLMs) to the Python implementation. For the Haskell DSL companion and its case studies, see [`haskell.md`](haskell.md).
 
+> **New Contributors:** See the [**Rosetta Stone Guide**](../guides/contributors/ROSETTA_STONE.md) for a trace of how math abstractions manifest in Haskell and Python.
+
 ## Contents
 
 - [A Reference Case: Claude Code](#a-reference-case-claude-code)

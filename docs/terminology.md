@@ -123,3 +123,20 @@ Whether ports belong in the Haskell domain model is an open design question (see
 | Capability profile, scaling slope | `implementation-plan.md` Phase 4 |
 | Candidate-change identity | `project_trial_event_stream` |
 | Three deployment scenarios | `project_deployment_scenarios`; `user-journeys.md` |
+
+---
+
+## Categorical Mappings
+
+For contributors transitioning from the mathematical precursors (`docs/math.pdf`, `AgentSpace.hs`), these are the canonical mappings:
+
+| Domain Term | Categorical Term | Implementation |
+| --- | --- | --- |
+| **Agentic Step / Skill** | Morphism ($f: X \to Y$) | `ApplySkill`, `CallModel` |
+| **User Harness** | Parametric Lens ($Para$) | `ParaGraph` in Haskell |
+| **Trial Outcome** | Coproduct / Sum Type ($\amalg$) | `Outcome` in Python/Haskell |
+| **Metric Extraction** | Projection ($\pi$) | `metricsOf` / `_has_metrics` |
+| **Workflow** | Composition / Monoidal Category | `Seq` (`>>>`), `Par` (`***`) |
+| **Feedback Loop** | Categorical Trace / Loop | `ArrowLoop` / `loop` |
+| **Optimization Goal** | Pareto Frontier | `pareto_frontier` |
+| **Surrogate Model** | Heteroscedastic GP | `NoisyEstimate` (ADR 0006) |
