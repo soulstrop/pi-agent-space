@@ -15,6 +15,7 @@ from .domain.types import (
     TrialEvent,
     VersionVector,
 )
+from .lifecycle import is_model_error
 from .ports.agent_harness_port import AgentHarnessPort
 from .ports.eval_suite_source_port import EvalSuiteSourcePort
 from .ports.persistence_port import PersistencePort
@@ -214,20 +215,6 @@ def _classify_outcome(telemetries: list[RawTelemetry]) -> Outcome:
     ``run_trial`` when a cost cap trips and is not derived from
     telemetry, so it is not handled here.
     """
-    if any(_has_model_error(t) for t in telemetries):
+    if any(is_model_error(t) for t in telemetries):
         return "error_escalated"
     return "completed"
-
-
-def _has_model_error(telemetry: RawTelemetry) -> bool:
-    if telemetry.exit_code != 0:
-        return True
-    for event in telemetry.events:
-        if event.get("type") != "message_end":
-            continue
-        message = event.get("message") or {}
-        if message.get("role") != "assistant":
-            continue
-        if message.get("stopReason") == "error":
-            return True
-    return False

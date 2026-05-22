@@ -24,6 +24,7 @@ from pathlib import Path
 
 from ..domain.test_suite import GraduatedProblem, ValidationStep
 from ..domain.types import Package, RawTelemetry, ValidationResult
+from ..lifecycle import is_model_error
 from ..ports.agent_harness_port import AgentHarnessPort
 from ..ports.sandbox_port import SandboxPort
 from .sandbox import NullSandbox
@@ -68,7 +69,7 @@ class CliSubprocessAdapter(AgentHarnessPort):
                 self._sleep(self._backoff_seconds[idx])
             telemetry = self._run_once(package, problem, materialized)
             last_telemetry = telemetry
-            if not _is_retryable_error(telemetry):
+            if not is_model_error(telemetry):
                 return telemetry
         assert last_telemetry is not None
         return last_telemetry
@@ -114,27 +115,6 @@ class CliSubprocessAdapter(AgentHarnessPort):
             stderr=proc.stderr,
             malformed_lines=malformed_lines,
         )
-
-
-def _is_retryable_error(telemetry: RawTelemetry) -> bool:
-    """ADR 0007 retryable-error rule, mirroring TrialRunner._has_model_error.
-
-    Kept local to the adapter (rather than imported from trial_runner)
-    so the adapter doesn't depend on the orchestrator. The two
-    predicates must stay in sync; both flow from ADR 0007 A2 source-
-    of-kill classification.
-    """
-    if telemetry.exit_code != 0:
-        return True
-    for event in telemetry.events:
-        if event.get("type") != "message_end":
-            continue
-        message = event.get("message") or {}
-        if message.get("role") != "assistant":
-            continue
-        if message.get("stopReason") == "error":
-            return True
-    return False
 
 
 def _run_validation_step(step: ValidationStep, workspace: Path) -> ValidationResult:
