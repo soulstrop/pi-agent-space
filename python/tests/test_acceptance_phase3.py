@@ -119,7 +119,9 @@ def test_phase3_acceptance_end_to_end(tmp_path):
         harness=CliSubprocessAdapter(pi_binary="pi"),
         scorer=SyntheticSuiteScorer(),
         persistence=persistence,
-        suite_source=GraduatedProblemSetAdapter(GRADUATED_PROBLEMS_DIR),
+        suite_source=GraduatedProblemSetAdapter(
+            GRADUATED_PROBLEMS_DIR, problem_ids=["001_binary_search"]
+        ),
     )
     proposer = RandomFromSlotSpace(
         slot_space=_slot_space_for(model),

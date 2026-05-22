@@ -61,3 +61,45 @@ def test_load_skips_directories_without_problem_json(tmp_path):
     adapter = GraduatedProblemSetAdapter(tmp_path)
     problems = adapter.load()
     assert [p.id for p in problems] == ["complete"]
+
+
+def _write_problem(parent: Path, dir_name: str, problem_id: str) -> None:
+    (parent / dir_name).mkdir()
+    (parent / dir_name / "problem.json").write_text(
+        json.dumps(
+            {
+                "id": problem_id,
+                "title": problem_id,
+                "difficulty": 1,
+                "prompt": "do thing",
+                "workspace_dir": dir_name,
+                "validation_steps": [
+                    {"name": "v", "command": "true", "expected_exit_code": 0}
+                ],
+                "tags": ["test"],
+            }
+        )
+    )
+
+
+def test_problem_ids_filter_returns_only_allowlisted(tmp_path):
+    _write_problem(tmp_path, "001_alpha", "001_alpha")
+    _write_problem(tmp_path, "002_beta", "002_beta")
+    _write_problem(tmp_path, "003_gamma", "003_gamma")
+    adapter = GraduatedProblemSetAdapter(
+        tmp_path, problem_ids=["001_alpha", "003_gamma"]
+    )
+    assert [p.id for p in adapter.load()] == ["001_alpha", "003_gamma"]
+
+
+def test_problem_ids_none_loads_everything(tmp_path):
+    _write_problem(tmp_path, "001_alpha", "001_alpha")
+    _write_problem(tmp_path, "002_beta", "002_beta")
+    adapter = GraduatedProblemSetAdapter(tmp_path, problem_ids=None)
+    assert {p.id for p in adapter.load()} == {"001_alpha", "002_beta"}
+
+
+def test_problem_ids_with_unknown_id_silently_excludes(tmp_path):
+    _write_problem(tmp_path, "001_alpha", "001_alpha")
+    adapter = GraduatedProblemSetAdapter(tmp_path, problem_ids=["does_not_exist"])
+    assert adapter.load() == []
