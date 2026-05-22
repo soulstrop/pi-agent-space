@@ -23,8 +23,12 @@ Configuration parameters track the ADRs:
   ``"circuit_breaker_time"`` respectively. ``boundary_violation``
   outcomes neither increment nor reset the consecutive-errors counter
   (only ``completed`` resets it, only ``error_escalated`` increments).
-* ``retry_budget`` (ADR 0007) — adapter-layer retry count; declared
-  here, enforced in a follow-up commit.
+* ``retry_budget`` (ADR 0007) — **declarative only in v1.** The driver
+  stores the value but does not plumb it into ``TrialRunner`` or the
+  harness; the actual configuration point is
+  ``CliSubprocessAdapter(retry_budget=...)`` at construction time.
+  Setting this kwarg on the driver has no runtime effect. Resolution
+  (remove the param or wire it through) defers to v2.
 """
 
 from __future__ import annotations
@@ -74,6 +78,7 @@ class OptimizerDriver:
         bootstrap_threshold: int = 10,
         max_consecutive_errors: int | None = None,
         max_time_without_completed_trial: timedelta | None = None,
+        # v1: declarative only; configure on CliSubprocessAdapter instead.
         retry_budget: int = 2,
         trial_id_factory: Callable[[], str] = _default_trial_id_factory,
         monotonic_clock: Callable[[], float] = time.monotonic,
