@@ -4,9 +4,15 @@ The model-error rule lives here so the orchestrator's outcome classifier
 (:func:`pi_evaluator.trial_runner._classify_outcome`) and the
 adapter-layer retry loop
 (:class:`pi_evaluator.adapters.cli_subprocess_adapter.CliSubprocessAdapter`)
-share a single source-of-kill definition. Phase 4.2's new lifecycle event
-phases (``error_retry``, ``error_escalated``, ``boundary_violation``) will
-extend this module rather than re-duplicating the rule.
+share a single source-of-kill definition.
+
+**Scope.** This module owns *telemetry-classified* outcomes only — predicates
+that inspect a ``RawTelemetry`` to decide if it represents a model-layer
+failure. Per ADR 0007 A2, *watchdog-classified* outcomes (``boundary_violation``
+from the cost-cap watchdog, future subprocess-timeout) are owned by their
+killer (``TrialRunner.run_trial``, ``OptimizerDriver.run``) and do NOT belong
+here. Phase 4.2's new event phases (``error_retry``, ``error_escalated``)
+extend this module; ``boundary_violation`` does not.
 """
 
 from __future__ import annotations

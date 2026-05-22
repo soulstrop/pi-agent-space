@@ -150,7 +150,7 @@ If a future skill mechanism introduces a higher-level "capability pipeline" wher
 
 ### Trial outcome classifier: v1 rule
 
-**Where:** `python/src/pi_evaluator/trial_runner.py` (`_classify_outcome`, `_has_model_error`).
+**Where:** `python/src/pi_evaluator/trial_runner.py` (`_classify_outcome`); `python/src/pi_evaluator/lifecycle.py` (`is_model_error`).
 
 **Decision:** A trial is `error_escalated` if **any** problem's `RawTelemetry` shows either (a) a non-zero subprocess exit code, or (b) an assistant `message_end` event with `stopReason == "error"`. Otherwise — absent a boundary trip from the cost-cap watchdog — the trial is `completed`. The cost-cap watchdog in `run_trial` sets `boundary_violation` directly when `per_trial_cost_cap_usd` is crossed, bypassing this classifier; subprocess timeouts remain unimplemented.
 
@@ -212,11 +212,11 @@ The trip-condition order in the loop is: error breaker → time breaker → per-
 
 ### Adapter-layer retries: inside the adapter, default budget=2
 
-**Where:** `python/src/pi_evaluator/adapters/cli_subprocess_adapter.py` (`CliSubprocessAdapter.run`, `_is_retryable_error`).
+**Where:** `python/src/pi_evaluator/adapters/cli_subprocess_adapter.py` (`CliSubprocessAdapter.run`); `python/src/pi_evaluator/lifecycle.py` (`is_model_error`).
 
-**Decision:** ADR 0007 B1's retry budget is implemented **inside `CliSubprocessAdapter`** rather than as a wrapping decorator port, so the "same materialized workspace across retries" commitment is honored natively (the workspace is created once per `run` call before the retry loop, not per attempt). The adapter takes `retry_budget` (default `2`, meaning up to 2 retries on top of the initial attempt = 3 total attempts), `backoff_seconds` (default `(30.0, 60.0)`), and an injectable `sleep` callable so tests don't actually wait. Retryable signals match `TrialRunner._has_model_error` precisely — non-zero subprocess exit OR an assistant `message_end` with `stopReason == "error"`. The predicate is duplicated as `_is_retryable_error` in the adapter rather than imported from `trial_runner` to keep adapter→orchestrator dependency direction clean; the two must stay in sync as ADR 0007 A2 evolves.
+**Decision:** ADR 0007 B1's retry budget is implemented **inside `CliSubprocessAdapter`** rather than as a wrapping decorator port, so the "same materialized workspace across retries" commitment is honored natively (the workspace is created once per `run` call before the retry loop, not per attempt). The adapter takes `retry_budget` (default `2`, meaning up to 2 retries on top of the initial attempt = 3 total attempts), `backoff_seconds` (default `(30.0, 60.0)`), and an injectable `sleep` callable so tests don't actually wait. Retryable signals are evaluated by `lifecycle.is_model_error` — non-zero subprocess exit OR an assistant `message_end` with `stopReason == "error"`. Step 3.5.1 (commit `2611d45`) extracted this predicate to a shared module so the orchestrator's `_classify_outcome` and the adapter's retry loop cannot drift; the earlier duplication (one copy per call site) was retired then.
 
-The driver-level `retry_budget` parameter (`OptimizerDriver.__init__`) remains declarative — it documents the ADR commitment but does not actively flow into the adapter. Operators wire the budget at `CliSubprocessAdapter` construction time. If divergence ever matters in practice (driver says 2, adapter says 5 — which wins?) the simplest fix is to remove the driver-side parameter; for v1 it stays for API consistency with the other ADR-tracked parameters declared there.
+The driver-level `retry_budget` parameter (`OptimizerDriver.__init__`) is **declarative-only in v1** (commit `cfa9f53`). The driver stores the value but does not plumb it into the harness; operators wire the budget at `CliSubprocessAdapter` construction time. Resolution (remove the param or wire it through) defers to v2 — tracked under "What's deferred" in `docs/implementation-plan.md`.
 
 When `retry_budget` exhausts without success, the adapter returns the last attempt's `RawTelemetry` verbatim. The trial runner's `_classify_outcome` rule sees this and tags the trial `error_escalated`, satisfying ADR 0007's "persistent errors preserve and queue" commitment (the trial directory is already on disk, so preservation is automatic — a dedicated preservation queue is not part of this chunk). Tests that intentionally exercise failure paths must opt out with `retry_budget=0` to avoid 90-second real-time backoff waits; the production-quality default (2 retries, 30/60s backoff) is what unattended runs need.
 

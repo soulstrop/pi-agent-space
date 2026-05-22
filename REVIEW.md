@@ -2,10 +2,7 @@
 
 ## Headline (auto-handled)
 
-1. [severity: high | effort: small | slp(s): architecture] Lifecycle classification logic (ADR 0007) is duplicated between `TrialRunner._has_model_error` and `CliSubprocessAdapter._is_retryable_error`.
-The code comments explicitly acknowledge this duplication to avoid an orchestrator-to-adapter dependency, but it creates a correctness risk where the two predicates can drift.
-   - **Suggested fix:** Extract the shared model-error predicate into a dedicated domain module, e.g., `pi_evaluator/domain/lifecycle.py`, as planned in `implementation-plan.md` L144.
-Both the runner and the adapter should import from this stable domain module.
+1. [severity: high | effort: small | slp(s): architecture] ~~Lifecycle classification logic (ADR 0007) is duplicated between `TrialRunner._has_model_error` and `CliSubprocessAdapter._is_retryable_error`.~~ **Resolved by Step 3.5.1 (commit `2611d45`):** predicate extracted to `pi_evaluator.lifecycle.is_model_error`; both call sites import it.
 2. [severity: medium | effort: medium | slp(s): architecture] ADR back-references in code use numeric IDs (e.g., "ADR 0005") instead of the exact filename slugs (e.g., "0005-trial-cost-and-budget").
 The `architecture` skill mandates using the exact slug to ensure references are mechanically greppable across the repo and resilient to drift.
    - **Suggested fix:** Update ADR back-references in docstrings and comments across the Python and Haskell source files to use the full filename slug of the corresponding ADR.
@@ -106,7 +103,7 @@ The `architecture` skill mandates using the exact slug to ensure references are 
 1. `SlotSpace.iter_packages` uses a quadruple nested loop to generate the Cartesian product of slots, leading to high cognitive complexity a... [low | software-complexity]
 2. `RandomFromSlotSpace.propose` exhaustively enumerates the `SlotSpace` into a list to pick one random unseen package. This is inefficient... [low | software-complexity]
 3. The `OptimizerDriver` constructor includes a `replicates` parameter that explicitly raises `NotImplementedError` for values other than 1,... [info | software-complexity]
-4. `_has_model_error` and `_is_retryable_error` have high cognitive complexity (nesting depth of 4-5) due to multiple conditional checks wit... [low | software-complexity]
+4. ~~`_has_model_error` and `_is_retryable_error` have high cognitive complexity (nesting depth of 4-5) due to multiple conditional checks wit...~~ **Resolved by Step 3.5.1 (commit `2611d45`)** — the two predicates were unified into `pi_evaluator.lifecycle.is_model_error`. [low | software-complexity]
 5. Duplicate timeout logic in .beads/hooks/ files: '_bd_timeout=${BEADS_HOOK_TIMEOUT:-300}' is repeated across 5 shell scripts. [low | dry]
 6. Duplicate test data construction: baseline objects for EvalSuiteRef and VersionVector are manually constructed in three different test fi... [low | dry]
 7. Duplicated package identity calculation in test_acceptance_phase3.py manually reconstructs package signatures instead of using candidate_... [low | dry]
