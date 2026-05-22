@@ -103,3 +103,38 @@ def test_problem_ids_with_unknown_id_silently_excludes(tmp_path):
     _write_problem(tmp_path, "001_alpha", "001_alpha")
     adapter = GraduatedProblemSetAdapter(tmp_path, problem_ids=["does_not_exist"])
     assert adapter.load() == []
+
+
+def test_problem_ids_rejects_bare_string(tmp_path):
+    import pytest
+
+    with pytest.raises(TypeError, match="bare str"):
+        GraduatedProblemSetAdapter(tmp_path, problem_ids="001_alpha")
+
+
+def test_problem_ids_filter_skips_malformed_excluded_problem(tmp_path):
+    """Allowlist must run before schema validation so a broken non-allowlisted
+    problem.json doesn't abort the pinned acceptance test's load."""
+    _write_problem(tmp_path, "001_alpha", "001_alpha")
+    # 002_broken has valid JSON but is missing the required "difficulty" field
+    (tmp_path / "002_broken").mkdir()
+    (tmp_path / "002_broken" / "problem.json").write_text(
+        json.dumps({"id": "002_broken", "title": "broken"})
+    )
+    adapter = GraduatedProblemSetAdapter(tmp_path, problem_ids=["001_alpha"])
+    assert [p.id for p in adapter.load()] == ["001_alpha"]
+
+
+def test_no_filter_still_validates_every_problem(tmp_path):
+    """Without an allowlist, schema validation still runs on every problem —
+    the pre-filter optimization must not weaken the default safety net."""
+    import pytest
+
+    _write_problem(tmp_path, "001_alpha", "001_alpha")
+    (tmp_path / "002_broken").mkdir()
+    (tmp_path / "002_broken" / "problem.json").write_text(
+        json.dumps({"id": "002_broken", "title": "broken"})
+    )
+    adapter = GraduatedProblemSetAdapter(tmp_path)
+    with pytest.raises(KeyError):
+        adapter.load()
