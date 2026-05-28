@@ -117,6 +117,7 @@ class TrialRunner:
                     timestamp=self._clock(),
                     payload={
                         "problem_id": problem.id,
+                        "difficulty": problem.difficulty,
                         "exit_code": telemetry.exit_code,
                     },
                 ),
