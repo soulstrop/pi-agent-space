@@ -90,7 +90,7 @@ In all three deployment scenarios, the eval suite plays the role Bockeler's user
 
 ## Capability profile
 
-Trial-level metrics aren't scalars — they are **fibered over difficulty**. A capability profile is a function `difficulty → metric_vector`, with summary axes (mean, p95, scaling slope) computed lazily for comparison. The Pareto frontier in v1 lives in `(mean_cost, scaling_slope, mean_quality)` over capability profiles, not in a 2D `(cost, quality)` collapse.
+Trial-level metrics aren't scalars — they are **fibered over difficulty**. A capability profile is a function `difficulty → metric_vector`, with summary axes (mean, variance, p95, scaling slope, n_samples) computed lazily for comparison. The Pareto frontier in v1 lives in `(mean_tokens, mean_dollars, scaling_slope, mean_quality)` over capability profiles (ADR 0005 / ADR 0012), not in a 2D `(cost, quality)` collapse. Phase 5 adds a subjective axis; Phase 6 fits a heteroscedastic GP over the same axes.
 
 ---
 

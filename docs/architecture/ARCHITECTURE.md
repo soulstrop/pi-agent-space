@@ -166,9 +166,10 @@ class Metrics:
     tokens_consumed: int
     validation_pass_rate: float
     quality_score: float
+    cost_dollars: float = 0.0
 ```
 
-Phase 1+2 scalar shape. Per [ADR 0005](../adrs/0005-trial-cost-and-budget.md), `cost_dollars: float` will join — the Pareto frontier becomes 4D `(mean_tokens, mean_dollars, scaling_slope, mean_quality)`, becoming 5D once subjective scoring lands. Phase 4 lifts this further to a capability-profile aggregation across difficulty levels.
+Per-problem scoring record. [ADR 0005](../adrs/0005-trial-cost-and-budget.md) added `cost_dollars` alongside `tokens_consumed` so the operator's limiting factor (tokens vs. dollars) is preserved as a separate Pareto axis. [ADR 0012](../adrs/0012-capability-profile-and-metric-events.md) and Phase 4 then aggregate per-problem `Metrics` across a multi-difficulty suite into a `CapabilityProfile` whose per-axis summaries `(mean, variance, p95, n_samples, scaling_slope)` feed the 4D Pareto frontier `(mean_tokens, mean_dollars, scaling_slope, mean_quality)`. Phase 5 lifts the frontier to 5D with the subjective axis.
 
 ---
 

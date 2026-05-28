@@ -87,7 +87,7 @@ A research-engineering team at a software vendor wants to map the configuration 
 4. The optimizer updates its surrogate and proposes the next configuration.
 
 ### What the research team gets back
-- A Pareto frontier in `(mean_cost, scaling_slope, mean_quality)` over the explored slot/value space, with the scaling slope making "cheap-then-explodes" packages distinguishable from "uniformly moderate" ones.
+- A Pareto frontier in `(mean_tokens, mean_dollars, scaling_slope, mean_quality)` over the explored slot/value space (ADR 0005 / ADR 0012), with the scaling slope making "cheap-then-explodes" packages distinguishable from "uniformly moderate" ones.
 - A prioritized list of unexplored regions worth probing next.
 - A record of how the frontier evolved over the budget — useful for understanding which slots drove the trade-offs and where further exploration would pay off.
 
@@ -109,7 +109,7 @@ All three journeys instantiate the same conceptual machinery:
 - An **eval suite** defines the validation context: synthetic graduated problems for R&D; a curated task set for the individual; the observed task distribution for the enterprise.
 - A **trial** is an event stream — `configuration → evaluation → objective scoring → subjective scoring → final` — whose phases may complete asynchronously and whose downstream consumers tolerate partial scoring.
 - A **Bayesian optimization loop** ingests trial history, fits a surrogate model over the configuration space, and proposes the next experiment subject to the deployment scenario's budget shape.
-- A **Pareto frontier** over a capability-profile-derived metric vector (`mean_cost`, `scaling_slope`, `mean_quality` at minimum) is the primary output surface for decision-making.
+- A **Pareto frontier** over a capability-profile-derived metric vector (`mean_tokens`, `mean_dollars`, `scaling_slope`, `mean_quality` at minimum, with a subjective axis added in Phase 5) is the primary output surface for decision-making.
 
 The three journeys differ along three axes, each expressed as a port-and-adapter boundary in the implementation:
 
