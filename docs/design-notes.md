@@ -239,3 +239,23 @@ The env allowlist is **explicit and short** (`PATH`, `LANG`, `LC_ALL`, `TERM`, `
 **Validation steps are not sandboxed in v1.** Per ADR 0004, graduated-problem validation commands are trusted code from the project's own repo. They execute *after* the trial, against workspace contents the agent may have written — so validation tooling running over agent-authored files (e.g., `pytest` on an agent-created test) is a real but secondary risk. Sandboxing validation forces extra decisions (shell semantics across binds, validation needing non-workspace paths) and is deferred until evidence of exploitation, not speculation.
 
 **Related:** [ADR 0009 — Trial Isolation Boundary](adrs/0009-trial-isolation-boundary.md); [ADR 0004 — Workspace Isolation](adrs/0004-workspace-isolation.md); `python/tests/test_sandbox.py`.
+
+---
+
+### Persistent-error preservation queue: derive-don't-store v1
+
+**Where:** `python/src/pi_evaluator/trial_runner.py` (`run_trial` finalize path; outcome written to `final.json`); `python/src/pi_evaluator/adapters/per_trial_directory_adapter.py` (`load_trials`); future scanner helper.
+
+**Decision:** ADR 0007 B1 commits to *preserving* trials whose retry budget exhausts and *queueing* them for asynchronous human classification. v1 satisfies both commitments without writing a new artifact at trial-finalization time. Preservation is already automatic — each trial's directory (`config.json`, `versions.json`, `events.jsonl`, `final.json`) lands on disk through `PerTrialDirectoryAdapter` during the normal trial lifecycle, and `final.json` carries `outcome="error_escalated"` for the trials in question. The "queue" is a *derived view* over that data, surfaced via a small helper that filters `PersistencePort.load_trials()` by outcome — implementation-side, a one-liner.
+
+This decision follows ADR 0011's event-stream-as-SoT logic: the trial directory is the single durable record; any aggregated view is derived from it. Writing a separate `preservation_queue.jsonl` at finalize time would commit to a schema for review-state tracking (which trials have been reviewed, dismissed, re-queued) before any consumer of that state exists. We have no review UX, no `bd`-style triage tool, no scheduled job — the v1 need is simply "find the error_escalated trials so a human can look at them," which the scanner satisfies fully.
+
+The scanner does not live behind a port. Outcome-filtering is not a domain operation that warrants port-shaped surface area; it is a one-time consumer-side concern. The natural shape is a free function or a `staticmethod` taking a `PersistencePort`, kept private to whatever consumer needs it (initially a CLI command or a notebook; no consumer exists in v1).
+
+**Trade-off considered: scanner vs. event log.** Spike 0009 (driver-run event log) is open and may eventually carry per-trial outcome events at driver scope. If 0009 lands first, the preservation queue naturally moves from "scan trial directories" to "scan the driver event log" — same derive-don't-store discipline, different source. The scanner approach does not paint us into a corner here; it just gets replaced by a different derivation when a better source exists.
+
+**Trade-off considered: review-state tracking.** A future CLI (`pi-eval triage`, `pi-eval review`, or similar) that lets operators mark trials reviewed/dismissed/re-queued *will* need durable state. That state belongs in a separate file owned by that CLI — `trials/review_state.jsonl` or similar — without touching the trial directories themselves. Adding the state surface is a v2 concern; v1 has no consumer for it.
+
+**Trade-off considered: scaling.** Scanning `trials/*/final.json` is O(N) in trial count. At v1's expected scale (≤100 trials per run during R&D), scan time is negligible. At enterprise scale (10k+ trials), the scan would want indexing or a different persistence backend — both already documented as ADR 0003 reconsider triggers, so this isn't a new failure mode.
+
+**Related:** [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md) (B1 preservation commitment); [ADR 0011 — Outcome Classifier as Single Source of Truth](adrs/0011-outcome-classifier-single-source-of-truth.md) (the derive-don't-store discipline this note inherits); `docs/implementation-plan.md` "Open spikes" (0009 driver-run event log as potential successor source); issue `pi-agent-space-1da`.
