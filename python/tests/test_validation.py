@@ -179,3 +179,24 @@ def test_problem_with_no_validation_steps_yields_empty_validation_results(tmp_pa
     problem = _problem(src, [])
     result = adapter.run(_package(), problem, workspace=str(src))
     assert result.validation_results == []
+
+
+def test_validation_does_not_invoke_a_shell(tmp_path):
+    """Commands run with shell=False, so metacharacters are not expanded
+    and chained commands do not execute (pi-agent-space-2wy)."""
+    src = tmp_path / "src"
+    src.mkdir()
+    sentinel = tmp_path / "sentinel"
+    pi = _make_mock_pi(tmp_path)
+    adapter = CliSubprocessAdapter(pi_binary=pi)
+    # If a shell ran this, the && chain would create the sentinel file.
+    # With shell=False + shlex.split, argv is ["true", "&&", "touch", str(sentinel)]
+    # and /bin/true ignores its extra args without side effects.
+    problem = _problem(
+        src,
+        [
+            ValidationStep(name="no-shell", command=f"true && touch {sentinel}"),
+        ],
+    )
+    adapter.run(_package(), problem, workspace=str(src))
+    assert not sentinel.exists()

@@ -26,6 +26,7 @@ with ``reason="subprocess_timeout"`` is tracked separately
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import time
 from collections.abc import Callable
@@ -130,12 +131,13 @@ class CliSubprocessAdapter(AgentHarnessPort):
 
 
 def _run_validation_step(step: ValidationStep, workspace: Path) -> ValidationResult:
+    argv = shlex.split(step.command)
     proc = subprocess.run(
-        step.command,
+        argv,
         cwd=str(workspace),
         capture_output=True,
         text=True,
-        shell=True,
+        shell=False,
         check=False,
     )
     return ValidationResult(
