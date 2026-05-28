@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -86,7 +87,22 @@ class TrialRunner:
         cumulative_cost = 0.0
         warning_emitted = False
         for problem in problems:
-            telemetry = self._harness.run(package, problem, problem.workspace_dir)
+            try:
+                telemetry = self._harness.run(package, problem, problem.workspace_dir)
+            except subprocess.TimeoutExpired as exc:
+                self._emit(
+                    trial,
+                    TrialEvent(
+                        phase="boundary_violation",
+                        timestamp=self._clock(),
+                        payload={
+                            "reason": "subprocess_timeout",
+                            "problem_id": problem.id,
+                            "timeout_seconds": exc.timeout,
+                        },
+                    ),
+                )
+                break
             metrics = self._scorer.score_objective(telemetry)
             per_problem_metrics.append(metrics)
             per_problem_telemetry.append(telemetry)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import subprocess
 
 import pytest
 
@@ -413,6 +414,91 @@ def test_per_trial_cost_cap_warning_emitted_at_most_once(tmp_path):
     assert trial.outcome == "completed"
     phases = [e.phase for e in trial.events]
     assert phases.count("cost_cap_warning") == 1
+
+
+# --- ADR 0007 A2 + ADR 0011: subprocess timeout → boundary_violation ---
+
+
+class _TimeoutOnNthHarness:
+    """Harness that raises subprocess.TimeoutExpired on the Nth call.
+
+    Earlier calls return a clean RawTelemetry; later calls (after the
+    timeout) should never happen because the loop breaks. Asserting on
+    ``self.calls`` confirms the runner stopped scheduling problems.
+    """
+
+    def __init__(self, timeout_on_call: int, timeout_seconds: float = 0.05) -> None:
+        self._timeout_on_call = timeout_on_call
+        self._timeout_seconds = timeout_seconds
+        self.calls = 0
+
+    def run(self, package, problem, workspace):
+        self.calls += 1
+        if self.calls == self._timeout_on_call:
+            raise subprocess.TimeoutExpired(cmd="pi", timeout=self._timeout_seconds)
+        return RawTelemetry(events=[], exit_code=0)
+
+
+def test_harness_timeout_emits_boundary_violation_event(tmp_path):
+    """A subprocess.TimeoutExpired from the harness produces a
+    boundary_violation event with reason='subprocess_timeout', and the
+    classifier resolves outcome accordingly."""
+    harness = _TimeoutOnNthHarness(timeout_on_call=1, timeout_seconds=0.5)
+    runner = TrialRunner(
+        harness=harness,  # type: ignore[arg-type]
+        scorer=StubScorer(),
+        persistence=PerTrialDirectoryAdapter(tmp_path),
+        suite_source=_ListSuiteSource([_problem("p1")]),
+        clock=_counter_clock(),
+    )
+    trial = runner.run_trial("t-001", _package(), _suite_ref(), _versions())
+    assert trial.outcome == "boundary_violation"
+    phases = [e.phase for e in trial.events]
+    assert "boundary_violation" in phases
+    assert phases[-1] == "finalized"
+    boundary = next(e for e in trial.events if e.phase == "boundary_violation")
+    assert boundary.payload["reason"] == "subprocess_timeout"
+    assert boundary.payload["problem_id"] == "p1"
+    assert boundary.payload["timeout_seconds"] == 0.5
+    finalized = next(e for e in trial.events if e.phase == "finalized")
+    assert finalized.payload["outcome"] == "boundary_violation"
+
+
+def test_harness_timeout_zeroes_quality_and_pass_rate(tmp_path):
+    """Boundary-violated trials carry zeroed quality / pass-rate per ADR
+    0011's outcome-driven metric shape."""
+    harness = _TimeoutOnNthHarness(timeout_on_call=1)
+    runner = TrialRunner(
+        harness=harness,  # type: ignore[arg-type]
+        scorer=StubScorer(),
+        persistence=PerTrialDirectoryAdapter(tmp_path),
+        suite_source=_ListSuiteSource([_problem("p1")]),
+        clock=_counter_clock(),
+    )
+    trial = runner.run_trial("t-001", _package(), _suite_ref(), _versions())
+    assert trial.final_metrics is not None
+    assert trial.final_metrics.quality_score == 0.0
+    assert trial.final_metrics.validation_pass_rate == 0.0
+
+
+def test_harness_timeout_mid_loop_skips_remaining_problems(tmp_path):
+    """Three problems, second times out → third never runs, first's
+    eval/scored events are preserved."""
+    harness = _TimeoutOnNthHarness(timeout_on_call=2)
+    runner = TrialRunner(
+        harness=harness,  # type: ignore[arg-type]
+        scorer=StubScorer(),
+        persistence=PerTrialDirectoryAdapter(tmp_path),
+        suite_source=_ListSuiteSource(
+            [_problem("p1"), _problem("p2"), _problem("p3")]
+        ),
+        clock=_counter_clock(),
+    )
+    trial = runner.run_trial("t-001", _package(), _suite_ref(), _versions())
+    assert harness.calls == 2, "third problem must not be scheduled after timeout"
+    assert trial.outcome == "boundary_violation"
+    scored = [e for e in trial.events if e.phase == "scored_objective"]
+    assert [e.payload["problem_id"] for e in scored] == ["p1"]
 
 
 def test_run_trial_passes_workspace_to_harness(tmp_path):
