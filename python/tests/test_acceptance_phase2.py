@@ -9,7 +9,9 @@ Marker-gated and prerequisite-gated:
     provider API key is in the environment.
 
 The test exercises the full Phase 2 pipeline:
-  - GraduatedProblemSetAdapter loads ``001_binary_search``.
+  - GraduatedProblemSetAdapter loads ``001_binary_search`` (pinned via
+    ``problem_ids=["001_binary_search"]`` so the test does not silently
+    expand once 002+ problems land under Phase 4.1).
   - CliSubprocessAdapter spawns the real ``pi`` binary in a
     materialized workspace.
   - Validation runs after Pi exits.
@@ -86,7 +88,9 @@ def test_phase2_acceptance_end_to_end(tmp_path):
         harness=CliSubprocessAdapter(pi_binary="pi"),
         scorer=SyntheticSuiteScorer(),
         persistence=persistence,
-        suite_source=GraduatedProblemSetAdapter(GRADUATED_PROBLEMS_DIR),
+        suite_source=GraduatedProblemSetAdapter(
+            GRADUATED_PROBLEMS_DIR, problem_ids=["001_binary_search"]
+        ),
     )
 
     trial = runner.run_trial(
