@@ -15,7 +15,7 @@ from .domain.types import (
     TrialEvent,
     VersionVector,
 )
-from .lifecycle import is_model_error
+from .lifecycle import classify_outcome
 from .ports.agent_harness_port import AgentHarnessPort
 from .ports.eval_suite_source_port import EvalSuiteSourcePort
 from .ports.persistence_port import PersistencePort
@@ -85,7 +85,6 @@ class TrialRunner:
         per_problem_telemetry: list[RawTelemetry] = []
         cumulative_cost = 0.0
         warning_emitted = False
-        boundary_tripped = False
         for problem in problems:
             telemetry = self._harness.run(package, problem, problem.workspace_dir)
             metrics = self._scorer.score_objective(telemetry)
@@ -151,20 +150,18 @@ class TrialRunner:
                             },
                         ),
                     )
-                    boundary_tripped = True
                     break
 
-        if boundary_tripped:
+        outcome: Outcome = classify_outcome(trial.events, per_problem_telemetry)
+        if outcome == "boundary_violation":
             final_metrics = Metrics(
                 tokens_consumed=sum(m.tokens_consumed for m in per_problem_metrics),
                 cost_dollars=sum(m.cost_dollars for m in per_problem_metrics),
                 validation_pass_rate=0.0,
                 quality_score=0.0,
             )
-            outcome: Outcome = "boundary_violation"
         else:
             final_metrics = _aggregate(per_problem_metrics)
-            outcome = _classify_outcome(per_problem_telemetry)
         trial.final_metrics = final_metrics
         trial.outcome = outcome
         self._emit(
@@ -207,14 +204,3 @@ def _aggregate(metrics: list[Metrics]) -> Metrics:
     )
 
 
-def _classify_outcome(telemetries: list[RawTelemetry]) -> Outcome:
-    """ADR 0007 trial-outcome classification.
-
-    Any model-layer error in any problem's telemetry escalates the
-    whole trial. ``boundary_violation`` is set by the watchdog in
-    ``run_trial`` when a cost cap trips and is not derived from
-    telemetry, so it is not handled here.
-    """
-    if any(is_model_error(t) for t in telemetries):
-        return "error_escalated"
-    return "completed"
