@@ -1,85 +1,120 @@
-# Agent Instructions
+# Agent Instructions: pi-agent-space
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+Welcome. This is the primary instruction manual for AI coding assistants working on `pi-agent-space`. Read this file to understand the project's unique constraints, architecture, and workflows.
 
-## Quick Reference
+**CRITICAL MANDATE: NEVER use TodoWrite, TaskCreate, or markdown TODO lists. Use `bd` (beads) for ALL task tracking.**
+
+## 1. Quick Reference & Core Directives
+
+*   **Source of Truth:** The Python implementation (`python/src/pi_evaluator/`) is the canonical source of truth. The categorical paper (`docs/math.pdf`) and Haskell DSL (`haskell/`) are precursors.
+*   **Tooling:** `mise` is the universal task runner. `uv` manages Python. `ty` is the type checker (ignore Pyright errors).
+*   **Architecture:** Hexagonal (ports-and-adapters). Domain at the center, ports as protocols, adapters at the edges, orchestration on top. No upward dependencies.
+*   **Issue Tracking:** `bd` (beads).
+*   **Non-Interactive Shell:** ALWAYS use non-interactive flags (e.g., `cp -f`, `rm -rf`) to avoid hanging the agent loop.
+
+## 2. Issue Tracking: Beads (MANDATORY)
+
+This project strictly uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
+
+### Workflow
 
 ```bash
 bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --claim  # Claim work atomically
 bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
 ```
 
-## Non-Interactive Shell Commands
+### Session Completion Protocol
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
+When ending a work session, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
 
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
+1.  **File issues:** Create issues for anything that needs follow-up.
+2.  **Run quality gates:** `mise run test`, `mise run lint`, `mise run typecheck`.
+3.  **Update status:** Close finished work (`bd close <id>`), update in-progress items.
+4.  **PUSH TO REMOTE (MANDATORY):**
+    ```bash
+    git pull --rebase
+    git push
+    git status  # MUST show "up to date with origin"
+    ```
+5.  **Clean up:** Clear stashes, prune remote branches.
+6.  **Verify:** All changes committed AND pushed.
+7.  **Hand off:** Provide context for the next session.
 
-**Use these forms instead:**
-```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
+**CRITICAL:** NEVER stop before pushing. NEVER say "ready to push when you are" - YOU must push. If push fails, resolve and retry.
 
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
-```
+### Persistent Knowledge
 
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+Use `bd remember` for persistent knowledge. Do NOT use `MEMORY.md` files.
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
-## Beads Issue Tracker
+## 3. Development Workflow
 
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
+### Setup
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
+mise run setup
+```
+*(Idempotent; runs `uv sync` in the `python/` directory).*
+
+### Running Tests
+
+The full suite runs Python + Haskell:
+
+```bash
+mise run test
 ```
 
-### Rules
+**Fast Dev Loop (Python Only):**
 
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+```bash
+cd python
+uv run pytest -q
+```
 
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+**Smoke Test (Crucial for CI/CD checks):**
+Validates the optimizer pipeline without the real `pi` binary or API keys. Run this after modifying `TrialRunner`, ports, or adapters.
 
-## Session Completion
+```bash
+cd python
+uv run python ../.claude/skills/run-pi-agent-space/smoke.py
+```
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+### Linting & Typechecking
 
-**MANDATORY WORKFLOW:**
+```bash
+mise run lint       # ruff
+mise run typecheck  # ty (Trust this over Pyright)
+```
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
+### Acceptance Tests (Real Pi)
 
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
+Acceptance tests require the `pi` binary on `PATH` and an API key (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`).
+
+```bash
+cd python
+mise run test-acceptance-full   # production-default budget (~7-8 min per trial)
+```
+*(Note: `test-acceptance-fast` is currently a placeholder and will fail if no tests are tagged).*
+
+## 4. Architecture & Domain
+
+### Hexagonal Layers
+
+1.  **Domain (`pi_evaluator/domain/`):** Pure data. Frozen dataclasses (`Package`, `RawTelemetry`, `Metrics`). `Trial` is mutable. No I/O.
+2.  **Ports (`pi_evaluator/ports/`):** `typing.Protocol` definitions (`AgentHarnessPort`, `ScoringPort`, `PersistencePort`, `EvalSuiteSourcePort`).
+3.  **Adapters (`pi_evaluator/adapters/`):** Concrete implementations (e.g., `CliSubprocessAdapter`, `SyntheticSuiteScorer`).
+4.  **Orchestration (`pi_evaluator/trial_runner.py`):** `TrialRunner` composes ports into the pipeline: `configured → (eval, scored_objective)+ → finalized`.
+
+### Key Concepts
+
+*   **Package:** The variable being optimized (`model`, `system_prompt`, `skills`, `template_values`).
+*   **Trial Outcomes:** `completed`, `boundary_violation` (hit cost/time cap), `error_escalated`.
+*   **Persistence (ADR 0003):** 4-file layout per trial (`config.json`, `versions.json`, `events.jsonl`, `final.json`).
+
+## 5. Gotchas & Known Issues
+
+*   **Pyright:** Ignore Pyright "could not be resolved" diagnostics. They are noise. Trust `mise run typecheck` (`ty`).
+*   **Namespace Packages:** Do NOT create `__init__.py` files anywhere under `python/src/pi_evaluator/`. The project uses PEP 420 namespace packages. Adding `__init__.py` breaks editable installs.
+*   **Haskell Tests:** `mise run test` is Haskell-dominated (~28s cold compile). For fast Python iteration, use `cd python && uv run pytest -q`.
+*   **Bwrap Integration Tests:** On Linux, `BwrapSandbox` integration tests may skip if user namespaces are disabled. On macOS, they skip permanently. This is expected behavior.
