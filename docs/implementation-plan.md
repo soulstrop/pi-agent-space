@@ -41,7 +41,7 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 - **5.1 Subjective-score event schema.** Define the event shape.
 - **5.2 Append-and-finalize.** Implement retroactive updates to `final.json` and `events.jsonl` for `"completed"` trials only. (Depends on resolution of open spikes S001 and S002.)
 - **5.3 Partial-score policy.** Define explicit policy: missing subjective is excluded from dependent axes.
-- **5.4 Acceptance test.** Verify the optimizer loop handles the transition from objective-only to fully-scored trials.
+- **5.4 Acceptance test.** Verify the optimizer loop handles the transition from objective-only to fully-scored trials. The Pareto frontier lifts from Phase 4's 4D `(mean_tokens, mean_dollars, scaling_slope, mean_quality)` to 5D with the subjective axis; partially-scored trials are excluded from dependent-axis dominance per 5.3.
 
 ---
 
@@ -54,8 +54,8 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 **Steps.**
 
 - **6.1 Featurize Package.** Map `Package` to a feature vector using the Phase 3.1 schema.
-- **6.2 Surrogate model.** Implement `HeteroskedasticSingleTaskGP` over the feature vector. Enforce bootstrap discipline (pure exploration below ~10 trials).
-- **6.3 Acquisition function.** Expected hypervolume improvement over the Pareto frontier (active only above bootstrap threshold).
+- **6.2 Surrogate model.** Implement `HeteroskedasticSingleTaskGP` over the feature vector. Output dimensionality matches the Pareto axes the acquisition function consumes — 4 heads after Phase 4 (`mean_tokens`, `mean_dollars`, `scaling_slope`, `mean_quality`), 5 once Phase 5's subjective axis lands. Enforce bootstrap discipline (pure exploration below ~10 trials).
+- **6.3 Acquisition function.** Expected hypervolume improvement over the Pareto frontier (active only above bootstrap threshold). EHVI computational cost grows with frontier dimensionality and trial count — 4D/5D over hundreds of trials is comfortable; if the frontier grows further (per-role axes, additional subjective dimensions), revisit.
 - **6.4 SurrogateProposer.** Replace `RandomFromSlotSpace` as the default proposer.
 - **6.5 Acceptance test.** End-to-end with real Pi, verifying stable, history-aware recommendations.
 
