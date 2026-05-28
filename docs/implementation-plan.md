@@ -39,7 +39,7 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 **Steps.**
 
 - **5.1 Subjective-score event schema.** Define the event shape.
-- **5.2 Append-and-finalize.** Implement retroactive updates to `final.json` and `events.jsonl` for `"completed"` trials only. (Depends on resolution of open spikes 0014 and 0015.)
+- **5.2 Append-and-finalize.** Implement retroactive updates to `final.json` and `events.jsonl` for `"completed"` trials only. (Depends on resolution of open spikes S001 and S002.)
 - **5.3 Partial-score policy.** Define explicit policy: missing subjective is excluded from dependent axes.
 - **5.4 Acceptance test.** Verify the optimizer loop handles the transition from objective-only to fully-scored trials.
 
@@ -63,11 +63,13 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 
 ## Open spikes
 
-| ADR | Question | Target phase | Status |
-| --- | --- | --- | --- |
-| 0014 (planned) | **Driver-run event log.** How to log per-run concerns (cost caps, circuit breakers) that cross trial boundaries? | Phase 5.2 | Open |
-| 0015 (planned) | **Re-finalize semantics.** Does `finalized` need to be the absolute last event, affecting Phase 5 retroactive updates? | Phase 5.2 | Open |
-| 0013 (planned) | **Boundary-violated trials visibility.** Should the surrogate see filtered boundary-violated trials as cliff signals? | Phase 6.2 | Open |
+Spikes use a separate `S###` ID namespace so the planned-spike list and the ADR list never collide. When a spike is opened as a real ADR, fill in the ADR column; when the spike closes, remove the row.
+
+| Spike | Question | Target phase | ADR (if opened) | Status |
+| --- | --- | --- | --- | --- |
+| S001 | **Driver-run event log.** How to log per-run concerns (cost caps, circuit breakers) that cross trial boundaries? | Phase 5.2 | — | Open |
+| S002 | **Re-finalize semantics.** Does `finalized` need to be the absolute last event, affecting Phase 5 retroactive updates? | Phase 5.2 | — | Open |
+| S003 | **Boundary-violated trials visibility.** Should the surrogate see filtered boundary-violated trials as cliff signals? | Phase 6.2 | — | Open |
 
 ## What's deferred (not in v1)
 
