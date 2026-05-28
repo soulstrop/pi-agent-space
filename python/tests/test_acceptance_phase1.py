@@ -13,6 +13,8 @@ import itertools
 import json
 from pathlib import Path
 
+import pytest
+
 from pi_evaluator.adapters.graduated_problem_set_adapter import (
     GraduatedProblemSetAdapter,
 )
@@ -120,8 +122,10 @@ def test_phase1_acceptance_end_to_end(tmp_path):
 
     final = json.loads((trial_dir / "final.json").read_text())
     assert final["metrics"]["tokens_consumed"] == 1234 * n_problems
-    assert final["metrics"]["validation_pass_rate"] == 1.0
-    assert final["metrics"]["quality_score"] == 0.95
+    # Averaging identical floats across N problems carries IEEE-754 noise
+    # once N>1; the contract is the value, not bit-exact summation.
+    assert final["metrics"]["validation_pass_rate"] == pytest.approx(1.0)
+    assert final["metrics"]["quality_score"] == pytest.approx(0.95)
     assert final["subjective_score"] is None
 
     # Returned in-memory Trial agrees with what landed on disk.

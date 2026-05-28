@@ -1,0 +1,15 @@
+{
+  "id": "002_graph_valid_tree",
+  "title": "Graph Valid Tree",
+  "difficulty": 2,
+  "prompt": "Implement `is_valid_tree(n, edges)` in `valid_tree.py`. Given `n` nodes labeled `0..n-1` and a list of undirected edges (each `[u, v]` pair), return `True` iff the edges form a valid tree (the graph is connected and contains no cycle). Return `False` otherwise. Do not modify `test_valid_tree.py`.",
+  "workspace_dir": "graduated_problems/002_graph_valid_tree",
+  "validation_steps": [
+    {
+      "name": "Run pytest",
+      "command": "pytest test_valid_tree.py",
+      "expected_exit_code": 0
+    }
+  ],
+  "tags": ["algorithms", "python", "graph", "union-find"]
+}

@@ -1,0 +1,15 @@
+{
+  "id": "003_alien_dictionary",
+  "title": "Alien Dictionary",
+  "difficulty": 3,
+  "prompt": "Implement `alien_order(words)` in `alien_order.py`. Given a list of `words` sorted lexicographically according to an unknown alien alphabet, return a string of the alphabet's letters in order. If no valid ordering exists (a contradiction is implied by the input, or a longer word precedes its own prefix), return the empty string. The returned string must contain every distinct letter that appears in `words`. Do not modify `test_alien_order.py`.",
+  "workspace_dir": "graduated_problems/003_alien_dictionary",
+  "validation_steps": [
+    {
+      "name": "Run pytest",
+      "command": "pytest test_alien_order.py",
+      "expected_exit_code": 0
+    }
+  ],
+  "tags": ["algorithms", "python", "graph", "topological-sort"]
+}
