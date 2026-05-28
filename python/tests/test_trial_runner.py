@@ -101,17 +101,52 @@ def test_run_trial_returns_trial_with_finalized_metrics(tmp_path):
 
 
 def test_run_trial_emits_full_phase_sequence(tmp_path):
+    """ADR 0012: each problem emits one `eval` followed by N `metric_record`
+    events (one per metric_name in v1: tokens_consumed, cost_dollars,
+    validation_pass_rate, quality_score)."""
     runner, _ = _runner(tmp_path, problems=[_problem("p1"), _problem("p2", 2)])
     trial = runner.run_trial("t-001", _package(), _suite_ref(), _versions())
     phases = [e.phase for e in trial.events]
-    assert phases == [
-        "configured",
-        "eval",
-        "scored_objective",
-        "eval",
-        "scored_objective",
-        "finalized",
-    ]
+    per_problem = ["eval"] + ["metric_record"] * 4
+    assert phases == ["configured"] + per_problem * 2 + ["finalized"]
+
+
+def test_run_trial_emits_metric_record_event_per_metric_per_problem(tmp_path):
+    """ADR 0012: payload shape is {problem_id, metric_name, value, n_samples};
+    n_samples=1 in v1 (no replication yet, ADR 0006)."""
+    fixed = Metrics(
+        tokens_consumed=42,
+        validation_pass_rate=0.5,
+        quality_score=0.7,
+        cost_dollars=0.013,
+    )
+    runner, _ = _runner(tmp_path, metrics=fixed, problems=[_problem("p1")])
+    trial = runner.run_trial("t-001", _package(), _suite_ref(), _versions())
+    records = [e for e in trial.events if e.phase == "metric_record"]
+    by_metric = {e.payload["metric_name"]: e.payload for e in records}
+    assert set(by_metric) == {
+        "tokens_consumed",
+        "cost_dollars",
+        "validation_pass_rate",
+        "quality_score",
+    }
+    assert by_metric["tokens_consumed"] == {
+        "problem_id": "p1",
+        "metric_name": "tokens_consumed",
+        "value": 42,
+        "n_samples": 1,
+    }
+    assert by_metric["cost_dollars"]["value"] == pytest.approx(0.013)
+    assert by_metric["validation_pass_rate"]["value"] == pytest.approx(0.5)
+    assert by_metric["quality_score"]["value"] == pytest.approx(0.7)
+    assert all(p["n_samples"] == 1 for p in by_metric.values())
+
+
+def test_run_trial_no_longer_emits_scored_objective(tmp_path):
+    """ADR 0012 supersedes scored_objective with metric_record events."""
+    runner, _ = _runner(tmp_path, problems=[_problem("p1"), _problem("p2", 2)])
+    trial = runner.run_trial("t-001", _package(), _suite_ref(), _versions())
+    assert all(e.phase != "scored_objective" for e in trial.events)
 
 
 def test_run_trial_writes_complete_on_disk_layout(tmp_path):
@@ -143,7 +178,10 @@ def test_run_trial_round_trips_via_load_trials(tmp_path):
     assert [e.phase for e in loaded.events] == [
         "configured",
         "eval",
-        "scored_objective",
+        "metric_record",
+        "metric_record",
+        "metric_record",
+        "metric_record",
         "finalized",
     ]
 
@@ -377,8 +415,8 @@ def test_per_trial_cost_cap_stops_running_remaining_problems(tmp_path):
         per_trial_cost_cap_usd=0.10,
     )
     assert trial.outcome == "boundary_violation"
-    scored_events = [e for e in trial.events if e.phase == "scored_objective"]
-    assert len(scored_events) == 2
+    eval_events = [e for e in trial.events if e.phase == "eval"]
+    assert len(eval_events) == 2
     assert trial.final_metrics is not None
     assert trial.final_metrics.cost_dollars == pytest.approx(0.12)
     assert trial.final_metrics.tokens_consumed == 10
@@ -497,8 +535,8 @@ def test_harness_timeout_mid_loop_skips_remaining_problems(tmp_path):
     trial = runner.run_trial("t-001", _package(), _suite_ref(), _versions())
     assert harness.calls == 2, "third problem must not be scheduled after timeout"
     assert trial.outcome == "boundary_violation"
-    scored = [e for e in trial.events if e.phase == "scored_objective"]
-    assert [e.payload["problem_id"] for e in scored] == ["p1"]
+    evals = [e for e in trial.events if e.phase == "eval"]
+    assert [e.payload["problem_id"] for e in evals] == ["p1"]
 
 
 def test_run_trial_passes_workspace_to_harness(tmp_path):

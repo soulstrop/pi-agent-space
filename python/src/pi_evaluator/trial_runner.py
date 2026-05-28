@@ -37,9 +37,11 @@ def _default_clock() -> str:
 class TrialRunner:
     """Run one trial end-to-end against a graduated problem suite.
 
-    Per the trial event-stream model (ADR 0003), a trial moves through:
-    configured → (eval, scored_objective)* → finalized. Subjective
-    scoring is async and lands outside this orchestrator (Phase 5).
+    Per the trial event-stream model (ADR 0003) and ADR 0012, a trial
+    moves through: ``configured → (eval, metric_record × M)* → finalized``
+    where M is the number of objective metrics per problem (v1: tokens,
+    dollars, validation_pass_rate, quality_score). Subjective scoring
+    is async and lands outside this orchestrator (Phase 5).
     """
 
     def __init__(
@@ -119,20 +121,20 @@ class TrialRunner:
                     },
                 ),
             )
-            self._emit(
-                trial,
-                TrialEvent(
-                    phase="scored_objective",
-                    timestamp=self._clock(),
-                    payload={
-                        "problem_id": problem.id,
-                        "tokens_consumed": metrics.tokens_consumed,
-                        "cost_dollars": metrics.cost_dollars,
-                        "validation_pass_rate": metrics.validation_pass_rate,
-                        "quality_score": metrics.quality_score,
-                    },
-                ),
-            )
+            for metric_name, value in _metric_records(metrics):
+                self._emit(
+                    trial,
+                    TrialEvent(
+                        phase="metric_record",
+                        timestamp=self._clock(),
+                        payload={
+                            "problem_id": problem.id,
+                            "metric_name": metric_name,
+                            "value": value,
+                            "n_samples": 1,
+                        },
+                    ),
+                )
 
             if per_trial_cost_cap_usd is not None:
                 warning_threshold = (
@@ -201,6 +203,21 @@ class TrialRunner:
     def _emit(self, trial: Trial, event: TrialEvent) -> None:
         trial.events.append(event)
         self._persistence.append_event(trial.trial_id, event)
+
+
+def _metric_records(metrics: Metrics) -> list[tuple[str, float | int]]:
+    """ADR 0012 metric_record event payloads, in stable order.
+
+    Order is fixed (tokens → dollars → pass_rate → quality) so downstream
+    consumers reading the event stream get deterministic per-problem
+    sequences without needing to sort.
+    """
+    return [
+        ("tokens_consumed", metrics.tokens_consumed),
+        ("cost_dollars", metrics.cost_dollars),
+        ("validation_pass_rate", metrics.validation_pass_rate),
+        ("quality_score", metrics.quality_score),
+    ]
 
 
 def _aggregate(metrics: list[Metrics]) -> Metrics:

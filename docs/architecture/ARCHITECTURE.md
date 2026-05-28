@@ -103,10 +103,10 @@ Concrete implementations of the ports. Stub adapters (`stub_*`) exist for Phase 
 `TrialRunner` composes the four ports into the trial pipeline:
 
 ```
-configured → (eval, scored_objective)+ → finalized
+configured → (eval, metric_record × M)+ → finalized
 ```
 
-`TrialRunner._aggregate` rolls per-problem metrics into trial-level aggregates (sum of tokens, mean of rates). `TrialRunner._classify_outcome` maps per-problem `RawTelemetry` to the [ADR 0007](../adrs/0007-pi-invocation-lifecycle.md) trial outcome enum (`completed`, `boundary_violation`, `error_escalated`).
+Per [ADR 0012](../adrs/0012-capability-profile-and-metric-events.md), each problem emits one `eval` event (carrying `exit_code`) followed by one `metric_record` event per objective metric (v1: `tokens_consumed`, `cost_dollars`, `validation_pass_rate`, `quality_score`). `TrialRunner._aggregate` rolls per-problem metrics into trial-level aggregates (sum of tokens, mean of rates). `lifecycle.classify_outcome` maps the per-trial event stream plus per-problem `RawTelemetry` to the [ADR 0007](../adrs/0007-pi-invocation-lifecycle.md) trial outcome enum (`completed`, `boundary_violation`, `error_escalated`) per ADR 0011's event-stream-first rule.
 
 ---
 
@@ -142,7 +142,7 @@ class Trial:
 Outcome = Literal["completed", "boundary_violation", "error_escalated"]
 ```
 
-A trial moves through phases — `configured → (eval, scored_objective)+ → finalized` — accumulating events. The `outcome` field, set at finalize-time, is the ADR 0007 sum: a *completed* trial yielded full metrics; a *boundary_violation* trial crossed a configured boundary (timeout, cost cap) and contributes to the surrogate as a cost-cliff data point; an *error_escalated* trial is preserved for asynchronous human classification and does not feed the surrogate.
+A trial moves through phases — `configured → (eval, metric_record × M)+ → finalized` (ADR 0012) — accumulating events. The `outcome` field, set at finalize-time, is the ADR 0007 sum: a *completed* trial yielded full metrics; a *boundary_violation* trial crossed a configured boundary (timeout, cost cap) and contributes to the surrogate as a cost-cliff data point; an *error_escalated* trial is preserved for asynchronous human classification and does not feed the surrogate.
 
 ### `RawTelemetry`
 

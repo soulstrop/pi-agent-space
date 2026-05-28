@@ -119,14 +119,22 @@ def test_phase2_acceptance_end_to_end(tmp_path):
     # The trial closed (objective scoring + finalize ran).
     assert trial.final_metrics is not None
 
-    # Phase sequence is configured → (eval, scored_objective)+ → finalized.
+    # Phase sequence per ADR 0012: configured → (eval, metric_record×4)+ → finalized.
     phases = [e.phase for e in trial.events]
     assert phases[0] == "configured"
     assert phases[-1] == "finalized"
     middle = phases[1:-1]
-    assert middle, "expected at least one (eval, scored_objective) pair"
-    assert all(middle[i] == "eval" for i in range(0, len(middle), 2))
-    assert all(middle[i] == "scored_objective" for i in range(1, len(middle), 2))
+    assert middle, "expected at least one (eval, metric_record×4) group"
+    per_problem = 5
+    assert len(middle) % per_problem == 0
+    assert all(
+        middle[i * per_problem] == "eval" for i in range(len(middle) // per_problem)
+    )
+    assert all(
+        middle[i * per_problem + j] == "metric_record"
+        for i in range(len(middle) // per_problem)
+        for j in range(1, per_problem)
+    )
 
     # Real Pi produced events on stdout (session header at minimum).
     final = json.loads((trial_dir / "final.json").read_text())
