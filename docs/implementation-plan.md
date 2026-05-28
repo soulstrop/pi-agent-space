@@ -39,7 +39,7 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 **Steps.**
 
 - **5.1 Subjective-score event schema.** Define the event shape.
-- **5.2 Append-and-finalize.** Implement retroactive updates to `final.json` and `events.jsonl` for `"completed"` trials only. (Depends on resolution of open spikes 0009 and 0010).
+- **5.2 Append-and-finalize.** Implement retroactive updates to `final.json` and `events.jsonl` for `"completed"` trials only. (Depends on resolution of open spikes 0014 and 0015.)
 - **5.3 Partial-score policy.** Define explicit policy: missing subjective is excluded from dependent axes.
 - **5.4 Acceptance test.** Verify the optimizer loop handles the transition from objective-only to fully-scored trials.
 
@@ -65,9 +65,9 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 
 | ADR | Question | Target phase | Status |
 | --- | --- | --- | --- |
-| 0009 (planned) | **Driver-run event log.** How to log per-run concerns (cost caps, circuit breakers) that cross trial boundaries? | Phase 5.2 | Open |
-| 0010 (planned) | **Re-finalize semantics.** Does `finalized` need to be the absolute last event, affecting Phase 5 retroactive updates? | Phase 5.2 | Open |
-| 0012 (planned) | **Boundary-violated trials visibility.** Should the surrogate see filtered boundary-violated trials as cliff signals? | Phase 6.2 | Open |
+| 0014 (planned) | **Driver-run event log.** How to log per-run concerns (cost caps, circuit breakers) that cross trial boundaries? | Phase 5.2 | Open |
+| 0015 (planned) | **Re-finalize semantics.** Does `finalized` need to be the absolute last event, affecting Phase 5 retroactive updates? | Phase 5.2 | Open |
+| 0013 (planned) | **Boundary-violated trials visibility.** Should the surrogate see filtered boundary-violated trials as cliff signals? | Phase 6.2 | Open |
 
 ## What's deferred (not in v1)
 
