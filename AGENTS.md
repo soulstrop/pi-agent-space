@@ -7,9 +7,14 @@ Welcome. This is the primary instruction manual for AI coding assistants working
 ## 1. Quick Reference & Core Directives
 
 *   **Source of Truth:** The Python implementation (`python/src/pi_evaluator/`) is the canonical source of truth. The categorical paper (`docs/math.pdf`) and Haskell DSL (`haskell/`) are precursors.
-*   **Tooling:** `mise` is the universal task runner. `uv` manages Python. `ty` is the type checker (ignore Pyright errors).
+*   **Tooling:** `mise` is the universal task runner. `uv` manages
+    Python. `ty` is the type checker (ignore Pyright errors).  Repo is
+    organized as a monorep0, with mise.toml at the root, in the python
+    and haskell subdirectopries.  The root mise.toml uses subidrectory
+    mise tasks as appropriate, e.g. './mise run test' calls
+    './haskell/mise run test' and './python/mise run test'
 *   **Architecture:** Hexagonal (ports-and-adapters). Domain at the center, ports as protocols, adapters at the edges, orchestration on top. No upward dependencies.
-*   **Issue Tracking:** `bd` (beads).
+*   **Issue Tracking:** (`docs/implementation-plan.md`) describes the overarching design and sequence of the work, while beads manages the active state, assignment, and lifecycle of those work items. `bd` (beads).
 *   **Non-Interactive Shell:** ALWAYS use non-interactive flags (e.g., `cp -f`, `rm -rf`) to avoid hanging the agent loop.
 
 ## 2. Issue Tracking: Beads (MANDATORY)
@@ -69,7 +74,7 @@ mise run test
 
 ```bash
 cd python
-uv run pytest -q
+mise run test 
 ```
 
 **Smoke Test (Crucial for CI/CD checks):**
@@ -116,5 +121,17 @@ mise run test-acceptance-full   # production-default budget (~7-8 min per trial)
 
 *   **Pyright:** Ignore Pyright "could not be resolved" diagnostics. They are noise. Trust `mise run typecheck` (`ty`).
 *   **Namespace Packages:** Do NOT create `__init__.py` files anywhere under `python/src/pi_evaluator/`. The project uses PEP 420 namespace packages. Adding `__init__.py` breaks editable installs.
-*   **Haskell Tests:** `mise run test` is Haskell-dominated (~28s cold compile). For fast Python iteration, use `cd python && uv run pytest -q`.
+*   **Haskell Tests:** `mise run test` is Haskell-dominated (~28s cold
+    compile). For fast Python iteration, use `cd python && mise run test`.
 *   **Bwrap Integration Tests:** On Linux, `BwrapSandbox` integration tests may skip if user namespaces are disabled. On macOS, they skip permanently. This is expected behavior.
+
+## 6. Development Methodology
+
+*   **TDD Red-Green-Refactor:**
+    1.  **Red:** Write a failing test for a small behavioral expectation.
+    2.  **Green:** Write minimal code to pass.
+    3.  **Refactor:** Restructure for clarity while keeping tests green.
+*   **Vertical Slices:** Each phase delivers an end-to-end working pipeline at current fidelity, not isolated modules.
+*   **Commit Strategy:** Prefer small, frequent commits that leave the suite green.
+*   **Doc-Sync Gate:** If a commit deletes or renames a symbol referenced in `docs/` (design notes, implementation plan), ADRs, or `REVIEW.md`, you MUST update those references in the same or an immediate sibling commit.
+*   **Interface Reviews:** Surface port shapes and schema gaps at phase boundaries before proceeding to the next phase.
