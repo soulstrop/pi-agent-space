@@ -15,14 +15,23 @@ data TestResult = Pass | Fail String deriving (Show, Eq)
 
 -- | Trial metrics. Per ADR 0005, tokens and dollars are independent
 -- axes: token-cheap models can be dollar-expensive across providers,
--- so the operator's limiting factor varies by deployment. Phase 4.4
--- extends this with the capability-profile scaling-slope axis; Phase
--- 5 adds the subjective axis.
+-- so the operator's limiting factor varies by deployment. Per ADR 0012
+-- (Phase 4), 'scalingSlope' carries the capability-profile slope-on-
+-- cost-dollars axis that distinguishes "cheap-then-explodes"
+-- configurations from "uniformly moderate" ones at the trial level.
+-- Phase 5 adds the subjective axis as a separate field.
+--
+-- At Python's level of abstraction, slope is derived lazily from a
+-- 'CapabilityProfile' over per-problem 'metric_record' events. The
+-- Haskell DSL deliberately collapses that fibration: 'Metrics' is
+-- already at the trial level, so 'scalingSlope' lives here directly
+-- as one more property of the trial-level object.
 data Metrics = Metrics
     { tokensConsumed     :: Int
     , costDollars        :: Float
     , validationPassRate :: Float
     , qualityScore       :: Float
+    , scalingSlope       :: Float
     } deriving (Show, Eq)
 
 data ModelParams = ModelParams
@@ -55,11 +64,13 @@ data Trial a b = Trial
 -- trials are dropped because they carry no metric; completed and
 -- boundary-violated trials are both eligible.
 --
--- Dominance per ADR 0005 / Phase 3.3 is 3D over @(tokensConsumed,
--- costDollars, qualityScore)@: trial @a@ dominates trial @b@ when @a@
--- is at-least-as-good on all three axes and strictly better on at
--- least one. Costs minimize; quality maximizes. Phase 4.4 lifts this
--- to 4D once @scalingSlope@ lands.
+-- Dominance per ADR 0005 / ADR 0012 / Phase 4.4 is 4D over
+-- @(tokensConsumed, costDollars, scalingSlope, qualityScore)@: trial
+-- @a@ dominates trial @b@ when @a@ is at-least-as-good on all four
+-- axes and strictly better on at least one. Cost axes
+-- (tokensConsumed, costDollars, scalingSlope) minimize — a smaller
+-- slope means the configuration's cost grows more slowly with
+-- difficulty. Quality maximizes.
 paretoFrontier :: [Trial a b] -> [Trial a b]
 paretoFrontier trials =
     [ t | t <- trials, hasMetrics t, not (isDominated t trials) ]
@@ -78,10 +89,12 @@ metricsDominate a b = noWorse && strictlyBetter
     noWorse =
         tokensConsumed a <= tokensConsumed b
         && costDollars   a <= costDollars   b
+        && scalingSlope  a <= scalingSlope  b
         && qualityScore  a >= qualityScore  b
     strictlyBetter =
         tokensConsumed a < tokensConsumed b
         || costDollars   a < costDollars   b
+        || scalingSlope  a < scalingSlope  b
         || qualityScore  a > qualityScore  b
 
 type History a b = [Trial a b]
@@ -116,6 +129,7 @@ predictPerformance (t:_) _ = case metricsOf (outcome t) of
         , costDollars        = 0
         , validationPassRate = 0
         , qualityScore       = 0
+        , scalingSlope       = 0
         }
 
 acquireNextConfiguration :: History a b -> AgentGraph Prompt TestResult

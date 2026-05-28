@@ -54,7 +54,7 @@ spec = do
       evaluatePara paraGraph params ("test_prompt", ["ctx"]) `shouldReturn` "Code from claude-3-7-sonnet at temp 0.7"
 
   describe "Pareto Optimization" $ do
-    it "finds the non-dominated configurations (3D: tokens, dollars, quality)" $ do
+    it "finds the non-dominated configurations (4D: tokens, dollars, slope, quality)" $ do
       let m1 = mkMetrics 1000 0.001 0.8 -- on frontier
           m2 = mkMetrics 2000 0.002 0.7 -- dominated by m1 on all axes
           m3 = mkMetrics 1500 0.003 0.9 -- on frontier (best quality)
@@ -106,6 +106,17 @@ spec = do
           tError = Trial Id ErrorEscalated
       map (metricsOf . outcome) (paretoFrontier [tCompleted, tError]) `shouldBe` [Just m1]
 
+    it "dominates on scalingSlope when other axes tie (ADR 0012)" $ do
+      -- With tokens, dollars, and quality identical, the trial with
+      -- the shallower cost-vs-difficulty slope dominates. This is the
+      -- Phase 4 deliverable: 'uniformly moderate' beats 'cheap-then-
+      -- explodes' when their means are equal.
+      let mFlat   = mkMetricsS 1000 0.001 0.8 0.0
+          mCliff  = mkMetricsS 1000 0.001 0.8 0.5
+          tFlat   = Trial Id (Completed mFlat)
+          tCliff  = Trial Id (Completed mCliff)
+      map (metricsOf . outcome) (paretoFrontier [tFlat, tCliff]) `shouldBe` [Just mFlat]
+
   describe "Bayesian Optimization" $ do
     it "predicts performance with a noisy estimate (stub)" $ do
       let m1 = mkMetrics 1000 0.001 0.8
@@ -114,6 +125,7 @@ spec = do
               , costDollars        = 0
               , validationPassRate = 0
               , qualityScore       = 0
+              , scalingSlope       = 0
               }
           history = [Trial Id (Completed m1)]
       predictPerformance history Copy `shouldBe`
@@ -133,13 +145,20 @@ spec = do
       let nextGraph = acquireNextConfiguration history
       evaluateGraph nextGraph "test" `shouldReturn` Pass
 
--- | Helper: build a Metrics with validationPassRate == qualityScore,
--- matching the v1 SyntheticSuiteScorer convention. Tests that only
--- need the three frontier axes use this to stay legible.
+-- | Helper: build a Metrics with validationPassRate == qualityScore
+-- and scalingSlope = 0, matching the v1 SyntheticSuiteScorer
+-- convention. Tests that don't probe slope-dominance use this to
+-- stay legible.
 mkMetrics :: Int -> Float -> Float -> Metrics
-mkMetrics t d q = Metrics
+mkMetrics t d q = mkMetricsS t d q 0.0
+
+-- | Helper with explicit scalingSlope for tests that exercise the
+-- Phase-4 4D dominance rule (ADR 0012).
+mkMetricsS :: Int -> Float -> Float -> Float -> Metrics
+mkMetricsS t d q s = Metrics
     { tokensConsumed     = t
     , costDollars        = d
     , validationPassRate = q
     , qualityScore       = q
+    , scalingSlope       = s
     }
