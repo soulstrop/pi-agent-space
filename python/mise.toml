@@ -27,9 +27,17 @@ run = "uv run ty check"
 description = "Run Python tests"
 run = "uv run pytest"
 
+[tasks.test-acceptance-fast]
+description = "Run minimal-spend real-Pi acceptance tests (1 trial, 0 retries, 1 problem; ADR 0010)"
+run = "uv run pytest -m acceptance_fast"
+
+[tasks.test-acceptance-full]
+description = "Run production-default real-Pi acceptance tests (ADR 0010)"
+run = "uv run pytest -m acceptance_full"
+
 [tasks.test-acceptance]
-description = "Run real-Pi acceptance tests (requires API keys, costs tokens)"
-run = "uv run pytest -m acceptance"
+description = "Run both fast and full real-Pi acceptance tests (ADR 0010)"
+run = "uv run pytest -m 'acceptance_fast or acceptance_full'"
 
 [tasks.build]
 description = "Build Python project"

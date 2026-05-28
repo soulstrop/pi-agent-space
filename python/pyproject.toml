@@ -23,9 +23,10 @@ packages = ["src/pi_evaluator"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 markers = [
-    "acceptance: real-Pi end-to-end acceptance test (requires API keys, costs tokens)",
+    "acceptance_fast: real-Pi acceptance test at minimal-spend budget (1 trial, 0 retries, 1 problem; ADR 0010)",
+    "acceptance_full: real-Pi acceptance test at production-default budget (ADR 0010)",
 ]
-addopts = "-m 'not acceptance'"
+addopts = "-m 'not acceptance_fast and not acceptance_full'"
 
 [tool.ruff.lint]
 # Defaults (E, F, W) plus pyupgrade (UP) for modernizations such as

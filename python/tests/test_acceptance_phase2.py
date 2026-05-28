@@ -1,8 +1,10 @@
 """Phase 2 acceptance test: real Pi against 001_binary_search.
 
 Marker-gated and prerequisite-gated:
-  - ``@pytest.mark.acceptance`` so the default ``mise run test`` skips it.
-    Run via ``mise run test-acceptance``.
+  - ``@pytest.mark.acceptance_full`` (ADR 0010) so the default ``mise
+    run test`` skips it. Run via ``mise run test-acceptance-full``.
+    The matching ``acceptance_fast`` variant is filed as follow-up
+    work — see beads issues opened against ADR 0010.
   - Skipped at runtime when ``pi`` is not on PATH or no recognised
     provider API key is in the environment.
 
@@ -57,7 +59,7 @@ def _detect_model() -> str | None:
     return None
 
 
-@pytest.mark.acceptance
+@pytest.mark.acceptance_full
 def test_phase2_acceptance_end_to_end(tmp_path):
     if shutil.which("pi") is None:
         pytest.skip("`pi` binary not on PATH")
