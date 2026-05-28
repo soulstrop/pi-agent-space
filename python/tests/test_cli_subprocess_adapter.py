@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from pi_evaluator.adapters.cli_subprocess_adapter import CliSubprocessAdapter
 from pi_evaluator.domain.test_suite import GraduatedProblem, ValidationStep
@@ -19,15 +22,20 @@ def _make_mock_pi(
     stderr_text: str = "",
     exit_code: int = 0,
     log_invocation: Path | None = None,
+    sleep_seconds: float = 0.0,
 ) -> str:
     """Write a tiny Python script that mimics Pi for one test invocation.
 
     Optional ``log_invocation`` path receives a JSON dump of argv + cwd
     when the mock runs; tests inspect this to verify the adapter built
     the command correctly.
+
+    ``sleep_seconds`` inserts a sleep after stdout is written but before
+    exit — used by timeout tests that need the subprocess to outlive a
+    short ``subprocess_timeout_seconds`` value.
     """
     script = tmp_path / "mock_pi"
-    parts = ["#!/usr/bin/env python3", "import json, os, sys"]
+    parts = ["#!/usr/bin/env python3", "import json, os, sys, time"]
     if log_invocation is not None:
         parts.append(f"with open({str(log_invocation)!r}, 'w') as f:")
         parts.append("    json.dump({'argv': sys.argv, 'cwd': os.getcwd()}, f)")
@@ -35,6 +43,8 @@ def _make_mock_pi(
         parts.append(f"print({line!r}, flush=True)")
     if stderr_text:
         parts.append(f"sys.stderr.write({stderr_text!r})")
+    if sleep_seconds > 0:
+        parts.append(f"time.sleep({sleep_seconds})")
     parts.append(f"sys.exit({exit_code})")
     script.write_text("\n".join(parts) + "\n")
     script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -371,3 +381,65 @@ def test_backoff_schedule_passed_to_sleep(tmp_path):
     )
     adapter.run(_package(), _problem(src), workspace=str(src))
     assert sleeps == [0.1, 0.2]
+
+
+# --- ADR 0007 A2: subprocess timeout ---
+
+
+def test_no_timeout_kwarg_is_default(tmp_path):
+    """Default behavior (no subprocess_timeout_seconds) does not enforce a
+    wall-clock limit — preserves the pre-timeout adapter contract."""
+    src = _src_workspace(tmp_path)
+    pi = _make_mock_pi(tmp_path, stdout_lines=[], exit_code=0)
+    adapter = CliSubprocessAdapter(pi_binary=pi, retry_budget=0)
+    result = adapter.run(_package(), _problem(src), workspace=str(src))
+    assert isinstance(result, RawTelemetry)
+    assert result.exit_code == 0
+
+
+def test_completion_under_timeout_returns_normal_telemetry(tmp_path):
+    """A subprocess that finishes well under the timeout returns RawTelemetry
+    unchanged — timeout config is non-disruptive to fast completions."""
+    src = _src_workspace(tmp_path)
+    pi = _make_mock_pi(tmp_path, stdout_lines=[], exit_code=0)
+    adapter = CliSubprocessAdapter(
+        pi_binary=pi,
+        retry_budget=0,
+        subprocess_timeout_seconds=10.0,
+    )
+    result = adapter.run(_package(), _problem(src), workspace=str(src))
+    assert isinstance(result, RawTelemetry)
+    assert result.exit_code == 0
+
+
+def test_timeout_fires_raises_subprocess_timeout_expired(tmp_path):
+    """Subprocess outliving the timeout raises subprocess.TimeoutExpired —
+    surfaced distinctly from a non-zero exit code (which would return a
+    RawTelemetry with exit_code != 0) per ADR 0007 A2."""
+    src = _src_workspace(tmp_path)
+    pi = _make_mock_pi(tmp_path, stdout_lines=[], exit_code=0, sleep_seconds=1.0)
+    adapter = CliSubprocessAdapter(
+        pi_binary=pi,
+        retry_budget=0,
+        subprocess_timeout_seconds=0.05,
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        adapter.run(_package(), _problem(src), workspace=str(src))
+
+
+def test_timeout_does_not_trigger_retries(tmp_path):
+    """ADR 0007 A2: timeouts are boundary violations, not retryable model
+    errors. The retry loop must not catch TimeoutExpired."""
+    src = _src_workspace(tmp_path)
+    pi = _make_mock_pi(tmp_path, stdout_lines=[], exit_code=0, sleep_seconds=1.0)
+    sleeps: list[float] = []
+    adapter = CliSubprocessAdapter(
+        pi_binary=pi,
+        retry_budget=5,
+        backoff_seconds=(0.01,),
+        sleep=sleeps.append,
+        subprocess_timeout_seconds=0.05,
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        adapter.run(_package(), _problem(src), workspace=str(src))
+    assert sleeps == [], "timeout must not engage the backoff/retry path"

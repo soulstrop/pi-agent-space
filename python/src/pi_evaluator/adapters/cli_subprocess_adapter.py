@@ -11,7 +11,16 @@ Per ADR 0007 B1, the adapter retries on transient error signals
 Retry budget defaults to 2 (3 total attempts: 1 initial + 2 retries),
 with exponential backoff at 30s / 60s. Persistent errors after the
 budget exhausts return the last attempt's telemetry verbatim, leaving
-``TrialRunner._classify_outcome`` to escalate the trial.
+``lifecycle.classify_outcome`` (ADR 0011) to escalate the trial.
+
+Per ADR 0007 A2, an optional ``subprocess_timeout_seconds`` enforces a
+wall-clock cap on each Pi invocation. When the cap fires,
+``subprocess.TimeoutExpired`` propagates past the retry loop unhandled —
+timeouts are boundary violations, not retryable model errors, so they
+must surface distinctly from a non-zero exit code. Wiring the trial
+runner to catch this exception and emit a ``boundary_violation`` event
+with ``reason="subprocess_timeout"`` is tracked separately
+(``pi-agent-space-1vc``).
 """
 
 from __future__ import annotations
@@ -48,12 +57,14 @@ class CliSubprocessAdapter(AgentHarnessPort):
         backoff_seconds: tuple[float, ...] = DEFAULT_RETRY_BACKOFF_SECONDS,
         sleep: Callable[[float], None] = time.sleep,
         sandbox: SandboxPort | None = None,
+        subprocess_timeout_seconds: float | None = None,
     ) -> None:
         self._pi = pi_binary
         self._retry_budget = retry_budget
         self._backoff_seconds = backoff_seconds
         self._sleep = sleep
         self._sandbox: SandboxPort = sandbox if sandbox is not None else NullSandbox()
+        self._subprocess_timeout_seconds = subprocess_timeout_seconds
 
     def run(
         self,
@@ -102,6 +113,7 @@ class CliSubprocessAdapter(AgentHarnessPort):
             capture_output=True,
             text=True,
             check=False,
+            timeout=self._subprocess_timeout_seconds,
         )
         validation_results = [
             _run_validation_step(step, materialized)
