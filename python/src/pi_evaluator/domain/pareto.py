@@ -36,6 +36,24 @@ from .types import Trial
 _REQUIRED_AXES = ("tokens_consumed", "cost_dollars", "quality_score")
 
 
+def subjective_axis(trial: Trial) -> float | None:
+    """Return the subjective score for Pareto axis projection, or None.
+
+    Policy (Phase 5.3): a trial without a subjective score is ineligible
+    for subjective-axis dominance. boundary_violation and error_escalated
+    trials can never receive a subjective score (ADR 0007 §C1), so they
+    always return None here.
+
+    Phase 5.4 uses this to lift pareto_frontier from 4D to 5D. The
+    boundary_violation inclusion question (whether bv trials participate
+    in the 5D frontier via a 4D-only path) is deferred to Phase 5.4 /
+    Phase 6 surrogate design.
+    """
+    if trial.subjective_score is None:
+        return None
+    return trial.subjective_score.score
+
+
 def pareto_frontier(trials: list[Trial]) -> list[Trial]:
     frontier: list[Trial] = []
     for t in trials:

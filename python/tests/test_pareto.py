@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from pi_evaluator.domain.pareto import pareto_frontier
+from pi_evaluator.domain.pareto import pareto_frontier, subjective_axis
 from pi_evaluator.domain.types import (
     EvalSuiteRef,
     Metrics,
     Outcome,
     Package,
+    SubjectiveScore,
     Trial,
     TrialEvent,
     VersionVector,
@@ -363,3 +364,57 @@ def test_add_to_frontier_incremental_update():
     t4 = _trial("t4", tokens=10, dollars=0.5, quality=0.7)
     frontier = add_to_frontier(frontier, t4)
     assert _ids(frontier) == {"t3", "t4"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.3: subjective_axis policy
+# ---------------------------------------------------------------------------
+
+def _ss(score: float = 0.8) -> SubjectiveScore:
+    return SubjectiveScore(score=score, notes="", scorer="user:me", timestamp="t")
+
+
+def test_subjective_axis_returns_score_when_present():
+    t = _trial("a", tokens=100, dollars=0.1, quality=0.5)
+    t.subjective_score = _ss(0.75)
+    assert subjective_axis(t) == 0.75
+
+
+def test_subjective_axis_returns_none_when_absent():
+    t = _trial("a", tokens=100, dollars=0.1, quality=0.5)
+    assert t.subjective_score is None
+    assert subjective_axis(t) is None
+
+
+def test_subjective_axis_boundary_violation_returns_none():
+    """boundary_violation trials cannot receive a subjective score (ADR 0007 §C1);
+    subjective_axis must return None for them."""
+    t = _trial("a", tokens=100, dollars=0.1, quality=0.0, outcome="boundary_violation")
+    assert subjective_axis(t) is None
+
+
+def test_subjective_axis_error_escalated_returns_none():
+    t = _trial("a", tokens=0, dollars=0.0, quality=0.0, outcome="error_escalated")
+    assert subjective_axis(t) is None
+
+
+def test_subjective_axis_zero_is_valid():
+    t = _trial("a", tokens=100, dollars=0.1, quality=0.5)
+    t.subjective_score = _ss(0.0)
+    assert subjective_axis(t) == 0.0
+
+
+def test_subjective_axis_one_is_valid():
+    t = _trial("a", tokens=100, dollars=0.1, quality=0.5)
+    t.subjective_score = _ss(1.0)
+    assert subjective_axis(t) == 1.0
+
+
+def test_4d_frontier_unchanged_by_phase_5_3():
+    """pareto_frontier stays 4D in Phase 5.3; subjective score is not yet an axis."""
+    scored = _trial("scored", tokens=100, dollars=0.1, quality=0.8)
+    scored.subjective_score = _ss(0.9)
+    unscored = _trial("unscored", tokens=100, dollars=0.1, quality=0.8)
+    # Both trials are identical on 4D axes; both should appear on the 4D frontier.
+    frontier = pareto_frontier([scored, unscored])
+    assert _ids(frontier) == {"scored", "unscored"}
