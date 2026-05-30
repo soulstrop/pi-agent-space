@@ -9,6 +9,7 @@ from ..domain.types import (
     Outcome,
     RunConfig,
     RunEvent,
+    SubjectiveScore,
     Trial,
     TrialEvent,
 )
@@ -25,7 +26,7 @@ class PersistencePort(Protocol):
         <base>/runs/{run_id}/{run_config.json, run_events.jsonl, trial_manifest.jsonl}
 
     Trial methods: ``save_trial``, ``append_event``, ``finalize_trial``,
-    ``load_trials``, ``save_frontier``.
+    ``write_subjective_score``, ``load_trials``, ``save_frontier``.
 
     Run methods: ``create_run``, ``append_run_event``,
     ``record_trial_dispatched``, ``record_trial_closed``.
@@ -41,6 +42,8 @@ class PersistencePort(Protocol):
         final_metrics: Metrics,
         outcome: Outcome,
     ) -> None: ...
+
+    def write_subjective_score(self, trial_id: str, ss: SubjectiveScore) -> None: ...
 
     def load_trials(self) -> list[Trial]: ...
 

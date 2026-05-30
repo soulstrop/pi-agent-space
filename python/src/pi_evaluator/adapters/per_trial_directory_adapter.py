@@ -86,6 +86,19 @@ class PerTrialDirectoryAdapter(PersistencePort):
         tmp.write_text(json.dumps(final, indent=2, sort_keys=True))
         tmp.replace(d / "final.json")
 
+    def write_subjective_score(self, trial_id: str, ss: SubjectiveScore) -> None:
+        d = self._trial_dir(trial_id)
+        final_file = d / "final.json"
+        final = json.loads(final_file.read_text())
+        if final.get("outcome") != "completed":
+            raise ValueError(
+                f"write_subjective_score requires outcome=completed; "
+                f"trial {trial_id!r} has outcome={final.get('outcome')!r}"
+            )
+        tmp = d / "subjective.json.tmp"
+        tmp.write_text(json.dumps(asdict(ss), indent=2, sort_keys=True))
+        tmp.replace(d / "subjective.json")
+
     def save_frontier(self, trial_ids: list[str]) -> None:
         """Write ``frontier.json`` atomically (temp-then-rename, ADR 0003)."""
         payload = {"trial_ids": list(trial_ids)}
@@ -124,8 +137,9 @@ class PerTrialDirectoryAdapter(PersistencePort):
                 final = json.loads(final_file.read_text())
                 final_metrics = Metrics(**final["metrics"])
                 outcome = final.get("outcome")
-                if final.get("subjective_score"):
-                    subjective = SubjectiveScore(**final["subjective_score"])
+            subjective_file = trial_dir / "subjective.json"
+            if subjective_file.exists():
+                subjective = SubjectiveScore(**json.loads(subjective_file.read_text()))
             trials.append(
                 Trial(
                     trial_id=config["trial_id"],

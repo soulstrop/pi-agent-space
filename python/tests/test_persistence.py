@@ -7,6 +7,7 @@ from pi_evaluator.domain.types import (
     Package,
     RunConfig,
     RunEvent,
+    SubjectiveScore,
     Trial,
     TrialEvent,
     VersionVector,
@@ -98,6 +99,68 @@ def test_finalize_records_error_escalated_outcome(tmp_path):
     adapter.finalize_trial("t-001", metrics, "error_escalated")
     final = json.loads((tmp_path / "t-001" / "final.json").read_text())
     assert final["outcome"] == "error_escalated"
+
+
+def test_write_subjective_score_creates_sidecar(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    adapter.finalize_trial("t-001", Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0), "completed")
+    ss = SubjectiveScore(score=0.8, notes="good", scorer="user:me", timestamp="2026-05-30T10:00:00Z")
+    adapter.write_subjective_score("t-001", ss)
+    sidecar = json.loads((tmp_path / "t-001" / "subjective.json").read_text())
+    assert sidecar["score"] == 0.8
+    assert sidecar["notes"] == "good"
+    assert sidecar["scorer"] == "user:me"
+    assert sidecar["timestamp"] == "2026-05-30T10:00:00Z"
+
+
+def test_write_subjective_score_is_atomic(tmp_path):
+    """No partial write: subjective.json appears fully written (temp-then-rename)."""
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    adapter.finalize_trial("t-001", Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0), "completed")
+    ss = SubjectiveScore(score=0.5, notes="", scorer="user:me", timestamp="t")
+    adapter.write_subjective_score("t-001", ss)
+    assert not (tmp_path / "t-001" / "subjective.json.tmp").exists()
+    assert (tmp_path / "t-001" / "subjective.json").exists()
+
+
+def test_write_subjective_score_rejects_boundary_violation(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    adapter.finalize_trial("t-001", Metrics(tokens_consumed=0, validation_pass_rate=0.0, quality_score=0.0), "boundary_violation")
+    ss = SubjectiveScore(score=0.5, notes="", scorer="user:me", timestamp="t")
+    import pytest
+    with pytest.raises(ValueError, match="completed"):
+        adapter.write_subjective_score("t-001", ss)
+
+
+def test_write_subjective_score_rejects_error_escalated(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    adapter.finalize_trial("t-001", Metrics(tokens_consumed=0, validation_pass_rate=0.0, quality_score=0.0), "error_escalated")
+    ss = SubjectiveScore(score=0.5, notes="", scorer="user:me", timestamp="t")
+    import pytest
+    with pytest.raises(ValueError, match="completed"):
+        adapter.write_subjective_score("t-001", ss)
+
+
+def test_load_trials_reads_subjective_from_sidecar(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    adapter.finalize_trial("t-001", Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0), "completed")
+    ss = SubjectiveScore(score=0.9, notes="excellent", scorer="user:me", timestamp="2026-05-30T11:00:00Z")
+    adapter.write_subjective_score("t-001", ss)
+    [loaded] = adapter.load_trials()
+    assert loaded.subjective_score == ss
+
+
+def test_load_trials_subjective_none_when_no_sidecar(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    adapter.finalize_trial("t-001", Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0), "completed")
+    [loaded] = adapter.load_trials()
+    assert loaded.subjective_score is None
 
 
 def test_round_trip_save_append_finalize_then_load(tmp_path):
