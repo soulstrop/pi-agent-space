@@ -76,13 +76,11 @@ class PerTrialDirectoryAdapter(PersistencePort):
         trial_id: str,
         final_metrics: Metrics,
         outcome: Outcome,
-        subjective_score: SubjectiveScore | None = None,
     ) -> None:
         d = self._trial_dir(trial_id)
         final = {
             "metrics": asdict(final_metrics),
             "outcome": outcome,
-            "subjective_score": asdict(subjective_score) if subjective_score else None,
         }
         tmp = d / "final.json.tmp"
         tmp.write_text(json.dumps(final, indent=2, sort_keys=True))

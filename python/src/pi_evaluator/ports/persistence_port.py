@@ -9,7 +9,6 @@ from ..domain.types import (
     Outcome,
     RunConfig,
     RunEvent,
-    SubjectiveScore,
     Trial,
     TrialEvent,
 )
@@ -41,7 +40,6 @@ class PersistencePort(Protocol):
         trial_id: str,
         final_metrics: Metrics,
         outcome: Outcome,
-        subjective_score: SubjectiveScore | None = None,
     ) -> None: ...
 
     def load_trials(self) -> list[Trial]: ...

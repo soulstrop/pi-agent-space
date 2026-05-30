@@ -126,7 +126,7 @@ def test_phase1_acceptance_end_to_end(tmp_path):
     # once N>1; the contract is the value, not bit-exact summation.
     assert final["metrics"]["validation_pass_rate"] == pytest.approx(1.0)
     assert final["metrics"]["quality_score"] == pytest.approx(0.95)
-    assert final["subjective_score"] is None
+    assert "subjective_score" not in final
 
     # Returned in-memory Trial agrees with what landed on disk.
     assert trial.trial_id == "t-acceptance-001"

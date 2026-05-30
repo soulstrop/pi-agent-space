@@ -7,7 +7,6 @@ from pi_evaluator.domain.types import (
     Package,
     RunConfig,
     RunEvent,
-    SubjectiveScore,
     Trial,
     TrialEvent,
     VersionVector,
@@ -89,17 +88,7 @@ def test_finalize_writes_final_json(tmp_path):
     final = json.loads((tmp_path / "t-001" / "final.json").read_text())
     assert final["metrics"]["tokens_consumed"] == 100
     assert final["outcome"] == "completed"
-    assert final["subjective_score"] is None
-
-
-def test_finalize_with_subjective_score(tmp_path):
-    adapter = PerTrialDirectoryAdapter(tmp_path)
-    adapter.save_trial(_trial())
-    metrics = Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0)
-    subj = SubjectiveScore(score=4.5, notes="ok", scorer="me", timestamp="t")
-    adapter.finalize_trial("t-001", metrics, "completed", subj)
-    final = json.loads((tmp_path / "t-001" / "final.json").read_text())
-    assert final["subjective_score"]["score"] == 4.5
+    assert "subjective_score" not in final
 
 
 def test_finalize_records_error_escalated_outcome(tmp_path):
