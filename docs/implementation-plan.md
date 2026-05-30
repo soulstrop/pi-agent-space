@@ -34,7 +34,7 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 
 **Goal.** Subjective scores arrive after a trial closes, retroactively update `final.json`, and the optimizer tolerates partially-scored trials.
 
-**Deliverable.** A `pi-eval score` CLI accepts a trial id and a subjective rating, appends a subjective-score event, and atomically updates `final.json`.
+**Deliverable.** A `pi-eval score` CLI accepts a trial id and a subjective rating and writes a `subjective.json` sidecar alongside the trial's `final.json` (ADR 0014).
 
 **Steps.**
 
@@ -67,8 +67,6 @@ Spikes use a separate `S###` ID namespace so the planned-spike list and the ADR 
 
 | Spike | Question | Target phase | ADR (if opened) | Status |
 | --- | --- | --- | --- | --- |
-| S001 | **Driver-run event log.** How to log per-run concerns (cost caps, circuit breakers) that cross trial boundaries? | Phase 5.2 | — | Open |
-| S002 | **Re-finalize semantics.** Does `finalized` need to be the absolute last event, affecting Phase 5 retroactive updates? | Phase 5.2 | — | Open |
 | S003 | **Boundary-violated trials visibility.** Should the surrogate see filtered boundary-violated trials as cliff signals? | Phase 6.2 | — | Open |
 
 ## What's deferred (not in v1)
