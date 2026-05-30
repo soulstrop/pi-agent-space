@@ -65,9 +65,11 @@ class TrialRunner:
         eval_suite_ref: EvalSuiteRef,
         version_vector: VersionVector,
         per_trial_cost_cap_usd: float | None = None,
+        run_id: str | None = None,
     ) -> Trial:
         trial = Trial(
             trial_id=trial_id,
+            run_id=run_id,
             package=package,
             eval_suite_ref=eval_suite_ref,
             version_vector=version_vector,

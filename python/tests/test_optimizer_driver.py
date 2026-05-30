@@ -534,6 +534,66 @@ def test_circuit_breaker_time_none_disables(tmp_path):
     assert len(result.trials) == 3
 
 
+def test_result_has_run_id(tmp_path):
+    driver, _ = _driver(tmp_path)
+    result = driver.run(trial_budget=1)
+    assert isinstance(result.run_id, str) and len(result.run_id) > 0
+
+
+def test_run_directory_created_with_expected_files(tmp_path):
+    driver, persistence = _driver(tmp_path)
+    result = driver.run(trial_budget=2)
+    run_dir = (tmp_path / "trials" / "runs" / result.run_id)
+    assert run_dir.is_dir()
+    assert (run_dir / "run_config.json").exists()
+    assert (run_dir / "run_events.jsonl").exists()
+    assert (run_dir / "trial_manifest.jsonl").exists()
+
+
+def test_run_events_bracket_the_run(tmp_path):
+    import json
+    driver, _ = _driver(tmp_path)
+    result = driver.run(trial_budget=1)
+    run_dir = tmp_path / "trials" / "runs" / result.run_id
+    events = [
+        json.loads(line)
+        for line in (run_dir / "run_events.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    phases = [e["phase"] for e in events]
+    assert phases[0] == "run_started"
+    assert phases[-1] == "run_halted"
+    assert events[-1]["payload"]["halted_reason"] == result.halted_reason
+
+
+def test_trial_manifest_records_dispatched_and_closed(tmp_path):
+    import json
+    driver, _ = _driver(tmp_path, id_factory=_id_factory())
+    result = driver.run(trial_budget=2)
+    run_dir = tmp_path / "trials" / "runs" / result.run_id
+    entries = [
+        json.loads(line)
+        for line in (run_dir / "trial_manifest.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    statuses = [e["status"] for e in entries]
+    assert statuses.count("dispatched") == 2
+    assert statuses.count("closed") == 2
+
+
+def test_trial_config_json_contains_run_id(tmp_path):
+    import json
+    driver, _ = _driver(tmp_path, id_factory=_id_factory())
+    result = driver.run(trial_budget=1)
+    trial_dirs = [
+        d for d in (tmp_path / "trials").iterdir()
+        if d.is_dir() and d.name != "runs"
+    ]
+    assert len(trial_dirs) == 1
+    config = json.loads((trial_dirs[0] / "config.json").read_text())
+    assert config["run_id"] == result.run_id
+
+
 def test_replicates_greater_than_one_not_yet_supported(tmp_path):
     workspace = tmp_path / "ws"
     workspace.mkdir()

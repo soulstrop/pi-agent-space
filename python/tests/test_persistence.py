@@ -5,6 +5,8 @@ from pi_evaluator.domain.types import (
     EvalSuiteRef,
     Metrics,
     Package,
+    RunConfig,
+    RunEvent,
     SubjectiveScore,
     Trial,
     TrialEvent,
@@ -156,3 +158,113 @@ def test_load_trials_skips_non_directory_entries(tmp_path):
 def test_load_trials_returns_empty_when_no_trials(tmp_path):
     adapter = PerTrialDirectoryAdapter(tmp_path)
     assert adapter.load_trials() == []
+
+
+def test_trial_run_id_round_trips_through_config_json(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    t = _trial()
+    t.run_id = "run-abc"
+    adapter.save_trial(t)
+    config = json.loads((tmp_path / "t-001" / "config.json").read_text())
+    assert config["run_id"] == "run-abc"
+    [loaded] = adapter.load_trials()
+    assert loaded.run_id == "run-abc"
+
+
+def test_trial_without_run_id_loads_as_none(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    # Manually remove run_id to simulate pre-ADR-0013 trial on disk
+    config_path = tmp_path / "t-001" / "config.json"
+    config = json.loads(config_path.read_text())
+    del config["run_id"]
+    config_path.write_text(json.dumps(config))
+    [loaded] = adapter.load_trials()
+    assert loaded.run_id is None
+
+
+# ------------------------------------------------------------------
+# Run directory tests (ADR 0013)
+# ------------------------------------------------------------------
+
+def _run_config() -> RunConfig:
+    return RunConfig(
+        eval_suite_ref=EvalSuiteRef(suite_id="coding_v1", suite_version="1.0.0"),
+        version_vector=VersionVector(
+            pi_version="0.74.0",
+            package_versions={},
+            eval_suite_version="1.0.0",
+        ),
+        trial_budget=5,
+        per_trial_cost_cap_usd=1.0,
+        per_run_cost_cap_usd=4.0,
+    )
+
+
+def test_create_run_writes_directory_and_files(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.create_run("run-001", _run_config())
+    run_dir = tmp_path / "runs" / "run-001"
+    assert run_dir.is_dir()
+    assert (run_dir / "run_config.json").exists()
+    assert (run_dir / "run_events.jsonl").exists()
+    assert (run_dir / "trial_manifest.jsonl").exists()
+
+
+def test_create_run_writes_config_fields(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.create_run("run-001", _run_config())
+    cfg = json.loads((tmp_path / "runs" / "run-001" / "run_config.json").read_text())
+    assert cfg["run_id"] == "run-001"
+    assert cfg["trial_budget"] == 5
+    assert cfg["per_trial_cost_cap_usd"] == 1.0
+    assert cfg["per_run_cost_cap_usd"] == 4.0
+
+
+def test_append_run_event_adds_line(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.create_run("run-001", _run_config())
+    adapter.append_run_event(
+        "run-001",
+        RunEvent(phase="run_started", timestamp="t1", payload={"trial_budget": 5}),
+    )
+    adapter.append_run_event(
+        "run-001",
+        RunEvent(phase="run_halted", timestamp="t2", payload={"halted_reason": "budget"}),
+    )
+    lines = (
+        tmp_path / "runs" / "run-001" / "run_events.jsonl"
+    ).read_text().splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["phase"] == "run_started"
+    assert json.loads(lines[1])["phase"] == "run_halted"
+    assert json.loads(lines[1])["payload"]["halted_reason"] == "budget"
+
+
+def test_record_trial_dispatched_and_closed_append_to_manifest(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.create_run("run-001", _run_config())
+    adapter.record_trial_dispatched("run-001", "t-aaa")
+    adapter.record_trial_closed("run-001", "t-aaa", "completed")
+    adapter.record_trial_dispatched("run-001", "t-bbb")
+    lines = (
+        tmp_path / "runs" / "run-001" / "trial_manifest.jsonl"
+    ).read_text().splitlines()
+    assert len(lines) == 3
+    first = json.loads(lines[0])
+    assert first["status"] == "dispatched"
+    assert first["trial_id"] == "t-aaa"
+    assert "timestamp" in first
+    second = json.loads(lines[1])
+    assert second["status"] == "closed"
+    assert second["outcome"] == "completed"
+    assert json.loads(lines[2])["trial_id"] == "t-bbb"
+
+
+def test_load_trials_ignores_runs_subdirectory(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.create_run("run-001", _run_config())
+    adapter.save_trial(_trial("t-001"))
+    loaded = adapter.load_trials()
+    assert len(loaded) == 1
+    assert loaded[0].trial_id == "t-001"

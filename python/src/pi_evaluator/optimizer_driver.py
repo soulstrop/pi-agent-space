@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from .domain.pareto import add_to_frontier, pareto_frontier
-from .domain.types import EvalSuiteRef, Trial, VersionVector
+from .domain.types import EvalSuiteRef, RunConfig, RunEvent, Trial, VersionVector
 from .ports.package_proposer_port import PackageProposerPort
 from .ports.persistence_port import PersistencePort
 from .trial_runner import COST_CAP_WARNING_FRACTION, TrialRunner
@@ -49,10 +49,16 @@ from .trial_runner import COST_CAP_WARNING_FRACTION, TrialRunner
 logger = logging.getLogger(__name__)
 
 
+def _now() -> str:
+    from datetime import UTC, datetime
+    return datetime.now(UTC).isoformat()
+
+
 @dataclass(frozen=True)
 class OptimizerResult:
     """In-memory summary of a driver run."""
 
+    run_id: str
     trials: list[Trial]
     frontier_trial_ids: list[str]
     halted_reason: str
@@ -104,6 +110,25 @@ class OptimizerDriver:
         self._monotonic_clock = monotonic_clock
 
     def run(self, trial_budget: int) -> OptimizerResult:
+        run_id = str(uuid.uuid4())
+        run_config = RunConfig(
+            eval_suite_ref=self._eval_suite_ref,
+            version_vector=self._version_vector,
+            trial_budget=trial_budget,
+            per_trial_cost_cap_usd=self._per_trial_cost_cap_usd,
+            per_run_cost_cap_usd=self._per_run_cost_cap_usd,
+            replicates=self._replicates,
+        )
+        self._persistence.create_run(run_id, run_config)
+        self._persistence.append_run_event(
+            run_id,
+            RunEvent(
+                phase="run_started",
+                timestamp=_now(),
+                payload={"trial_budget": trial_budget},
+            ),
+        )
+
         history = self._persistence.load_trials()
         new_trials: list[Trial] = []
         halted_reason = "budget"
@@ -120,13 +145,18 @@ class OptimizerDriver:
                 halted_reason = "exhausted"
                 break
 
+            trial_id = self._trial_id_factory()
+            self._persistence.record_trial_dispatched(run_id, trial_id)
             trial = self._runner.run_trial(
-                trial_id=self._trial_id_factory(),
+                trial_id=trial_id,
+                run_id=run_id,
                 package=package,
                 eval_suite_ref=self._eval_suite_ref,
                 version_vector=self._version_vector,
                 per_trial_cost_cap_usd=self._per_trial_cost_cap_usd,
             )
+            assert trial.outcome is not None  # run_trial always sets outcome
+            self._persistence.record_trial_closed(run_id, trial_id, trial.outcome)
             new_trials.append(trial)
 
             # Incremental update: O(F) per trial where F is frontier size
@@ -168,18 +198,42 @@ class OptimizerDriver:
                     and cumulative > warning_threshold
                 ):
                     logger.warning(
-                        "Per-run cost cap warning: cumulative=$%.4f exceeds "
-                        "%.0f%% of cap $%.4f",
-                        cumulative,
-                        COST_CAP_WARNING_FRACTION * 100,
-                        self._per_run_cost_cap_usd,
+                        "per-run cost cap warning",
+                        extra={
+                            "event": "per_run_cost_cap_warning",
+                            "run_id": run_id,
+                            "cumulative_cost_dollars": round(cumulative, 6),
+                            "cap_usd": self._per_run_cost_cap_usd,
+                            "threshold_fraction": COST_CAP_WARNING_FRACTION,
+                        },
+                    )
+                    self._persistence.append_run_event(
+                        run_id,
+                        RunEvent(
+                            phase="per_run_cost_cap_warning",
+                            timestamp=_now(),
+                            payload={
+                                "cumulative_cost_dollars": round(cumulative, 6),
+                                "cap_usd": self._per_run_cost_cap_usd,
+                                "threshold_fraction": COST_CAP_WARNING_FRACTION,
+                            },
+                        ),
                     )
                     run_warning_emitted = True
                 if cumulative > self._per_run_cost_cap_usd:
                     halted_reason = "per_run_cost_cap"
                     break
 
+        self._persistence.append_run_event(
+            run_id,
+            RunEvent(
+                phase="run_halted",
+                timestamp=_now(),
+                payload={"halted_reason": halted_reason},
+            ),
+        )
         return OptimizerResult(
+            run_id=run_id,
             trials=new_trials,
             frontier_trial_ids=[t.trial_id for t in frontier],
             halted_reason=halted_reason,

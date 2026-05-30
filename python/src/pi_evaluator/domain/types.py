@@ -128,12 +128,39 @@ class TrialEvent:
     payload: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class RunEvent:
+    """One event in a run's run_events.jsonl (ADR 0013)."""
+
+    phase: str
+    timestamp: str
+    payload: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RunConfig:
+    """Immutable configuration snapshot written to run_config.json (ADR 0013).
+
+    Captures the parameters that governed a run so post-hoc analysis can
+    reconstruct what constraints were in effect.
+    """
+
+    eval_suite_ref: EvalSuiteRef
+    version_vector: VersionVector
+    trial_budget: int
+    per_trial_cost_cap_usd: float | None = None
+    per_run_cost_cap_usd: float | None = None
+    replicates: int = 1
+
+
 @dataclass
 class Trial:
     """In-memory representation of a trial across its lifecycle.
 
     Mutable: events accrue as phases complete. ``final_metrics`` and
     ``subjective_score`` remain ``None`` until their phases land.
+    ``run_id`` is ``None`` for trials run outside an ``OptimizerDriver``
+    (e.g. standalone ``TrialRunner`` calls in tests).
     """
 
     trial_id: str
@@ -144,3 +171,4 @@ class Trial:
     final_metrics: Metrics | None = None
     subjective_score: SubjectiveScore | None = None
     outcome: Outcome | None = None
+    run_id: str | None = None

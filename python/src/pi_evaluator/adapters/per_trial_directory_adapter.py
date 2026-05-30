@@ -1,9 +1,10 @@
-"""Per-trial directory adapter implementing PersistencePort per ADR 0003."""
+"""Filesystem-backed persistence: per-trial and per-run directories (ADR 0003, ADR 0013)."""
 
 from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..domain.types import (
@@ -11,6 +12,8 @@ from ..domain.types import (
     Metrics,
     Outcome,
     Package,
+    RunConfig,
+    RunEvent,
     SubjectiveScore,
     Trial,
     TrialEvent,
@@ -19,12 +22,31 @@ from ..domain.types import (
 from ..ports.persistence_port import PersistencePort
 
 
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
 class PerTrialDirectoryAdapter(PersistencePort):
-    """Filesystem-backed persistence: one directory per trial."""
+    """Filesystem-backed persistence.
+
+    Trial layout (ADR 0003):
+        <base>/<trial_id>/{config.json, versions.json, events.jsonl, final.json}
+
+    Run layout (ADR 0013):
+        <base>/runs/<run_id>/{run_config.json, run_events.jsonl, trial_manifest.jsonl}
+
+    ``load_trials`` scans ``<base>/`` directly; the ``runs/`` subdirectory
+    is skipped automatically because it contains no ``config.json`` /
+    ``versions.json`` files.
+    """
 
     def __init__(self, base_dir: str | Path) -> None:
         self._base = Path(base_dir)
         self._base.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Trial methods
+    # ------------------------------------------------------------------
 
     def _trial_dir(self, trial_id: str) -> Path:
         return self._base / trial_id
@@ -34,6 +56,7 @@ class PerTrialDirectoryAdapter(PersistencePort):
         d.mkdir(parents=True, exist_ok=True)
         config = {
             "trial_id": trial.trial_id,
+            "run_id": trial.run_id,
             "package": asdict(trial.package),
             "eval_suite_ref": asdict(trial.eval_suite_ref),
         }
@@ -45,9 +68,7 @@ class PerTrialDirectoryAdapter(PersistencePort):
             events_file.write_text("")
 
     def append_event(self, trial_id: str, event: TrialEvent) -> None:
-        d = self._trial_dir(trial_id)
-        events_file = d / "events.jsonl"
-        with events_file.open("a") as f:
+        with (self._trial_dir(trial_id) / "events.jsonl").open("a") as f:
             f.write(json.dumps(asdict(event), sort_keys=True) + "\n")
 
     def finalize_trial(
@@ -68,13 +89,7 @@ class PerTrialDirectoryAdapter(PersistencePort):
         tmp.replace(d / "final.json")
 
     def save_frontier(self, trial_ids: list[str]) -> None:
-        """Write ``frontier.json`` listing the current non-dominated trial IDs.
-
-        Atomic temp-then-rename so partial writes never produce a
-        truncated file. Called by the optimizer driver after each
-        trial closes (Phase 3.4) so a crashed run leaves the latest
-        frontier on disk.
-        """
+        """Write ``frontier.json`` atomically (temp-then-rename, ADR 0003)."""
         payload = {"trial_ids": list(trial_ids)}
         tmp = self._base / "frontier.json.tmp"
         tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
@@ -116,6 +131,7 @@ class PerTrialDirectoryAdapter(PersistencePort):
             trials.append(
                 Trial(
                     trial_id=config["trial_id"],
+                    run_id=config.get("run_id"),
                     package=package,
                     eval_suite_ref=eval_suite_ref,
                     version_vector=version_vector,
@@ -126,3 +142,43 @@ class PerTrialDirectoryAdapter(PersistencePort):
                 )
             )
         return trials
+
+    # ------------------------------------------------------------------
+    # Run methods (ADR 0013)
+    # ------------------------------------------------------------------
+
+    def _run_dir(self, run_id: str) -> Path:
+        return self._base / "runs" / run_id
+
+    def create_run(self, run_id: str, config: RunConfig) -> None:
+        d = self._run_dir(run_id)
+        d.mkdir(parents=True, exist_ok=True)
+        run_config_payload = {"run_id": run_id, **asdict(config)}
+        (d / "run_config.json").write_text(
+            json.dumps(run_config_payload, indent=2, sort_keys=True)
+        )
+        for fname in ("run_events.jsonl", "trial_manifest.jsonl"):
+            f = d / fname
+            if not f.exists():
+                f.write_text("")
+
+    def append_run_event(self, run_id: str, event: RunEvent) -> None:
+        with (self._run_dir(run_id) / "run_events.jsonl").open("a") as f:
+            f.write(json.dumps(asdict(event), sort_keys=True) + "\n")
+
+    def record_trial_dispatched(self, run_id: str, trial_id: str) -> None:
+        entry = {"status": "dispatched", "timestamp": _now(), "trial_id": trial_id}
+        with (self._run_dir(run_id) / "trial_manifest.jsonl").open("a") as f:
+            f.write(json.dumps(entry, sort_keys=True) + "\n")
+
+    def record_trial_closed(
+        self, run_id: str, trial_id: str, outcome: Outcome
+    ) -> None:
+        entry = {
+            "outcome": outcome,
+            "status": "closed",
+            "timestamp": _now(),
+            "trial_id": trial_id,
+        }
+        with (self._run_dir(run_id) / "trial_manifest.jsonl").open("a") as f:
+            f.write(json.dumps(entry, sort_keys=True) + "\n")
