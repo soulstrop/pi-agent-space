@@ -259,3 +259,21 @@ The scanner does not live behind a port. Outcome-filtering is not a domain opera
 **Trade-off considered: scaling.** Scanning `trials/*/final.json` is O(N) in trial count. At v1's expected scale (≤100 trials per run during R&D), scan time is negligible. At enterprise scale (10k+ trials), the scan would want indexing or a different persistence backend — both already documented as ADR 0003 reconsider triggers, so this isn't a new failure mode.
 
 **Related:** [ADR 0007 — Pi Invocation Lifecycle](adrs/0007-pi-invocation-lifecycle.md) (B1 preservation commitment); [ADR 0011 — Outcome Classifier as Single Source of Truth](adrs/0011-outcome-classifier-single-source-of-truth.md) (the derive-don't-store discipline this note inherits); `docs/implementation-plan.md` "Open spikes" (0009 driver-run event log as potential successor source); issue `pi-agent-space-1da`.
+
+---
+
+### pi-eval score CLI: argparse, direct adapter, no port (Phase 5.2)
+
+**Where:** `python/src/pi_evaluator/cli/score.py`; entry point `pi-eval` in `pyproject.toml` `[project.scripts]`.
+
+**Decision:** The `pi-eval score` command is implemented as a stdlib `argparse` entry point that instantiates `PerTrialDirectoryAdapter` directly. It does not go through a port abstraction. Flags: `--base-dir`, `--trial-id`, `--score`, `--scorer`, `--notes`.
+
+**Why no Click:** Click is not a declared dependency; argparse is stdlib. Adding Click for a single command with five flags is not justified by v1 scope. Revisit at Phase 6 if multi-subcommand complexity warrants it.
+
+**Why direct adapter:** The CLI is the composition root for its own operation. `write_subjective_score` is a single adapter call with no branching; inserting a port layer here would be indirection without abstraction. The "no port for one-off consumer concerns" precedent was already set for the preservation-queue scanner above.
+
+**Why no `cli/` port:** The `pi_evaluator/cli/` package uses PEP 420 namespace packages (no `__init__.py`), consistent with the rest of the project.
+
+**Timestamp:** Generated at CLI invocation time (UTC ISO-8601) inside the entry point; callers cannot override it in v1. Reconsider if test-harness or batch-scoring needs a deterministic timestamp.
+
+**Related:** [ADR 0014 — Subjective score sidecar](adrs/0014-subjective-score-sidecar.md); `PersistencePort.write_subjective_score`; issue `pi-agent-space-uwt`.
