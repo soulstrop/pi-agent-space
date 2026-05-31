@@ -418,3 +418,62 @@ def test_4d_frontier_unchanged_by_phase_5_3():
     # Both trials are identical on 4D axes; both should appear on the 4D frontier.
     frontier = pareto_frontier([scored, unscored])
     assert _ids(frontier) == {"scored", "unscored"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.4: 5D Pareto — subjective axis participates in dominance
+# ---------------------------------------------------------------------------
+
+def test_5d_higher_subjective_dominates_lower_when_objectives_tied():
+    """When two trials tie on all 4 objective axes and both have subjective
+    scores, the one with the higher subjective score dominates."""
+    high = _trial("high", tokens=100, dollars=0.1, quality=0.5)
+    high.subjective_score = _ss(0.9)
+    low = _trial("low", tokens=100, dollars=0.1, quality=0.5)
+    low.subjective_score = _ss(0.3)
+    assert _ids(pareto_frontier([high, low])) == {"high"}
+
+
+def test_5d_unscored_trial_not_excluded_by_scored_when_objectives_tied():
+    """An unscored trial is ineligible for subjective-axis dominance (5.3
+    policy). A scored trial with identical objectives cannot displace it."""
+    scored = _trial("scored", tokens=100, dollars=0.1, quality=0.5)
+    scored.subjective_score = _ss(0.9)
+    unscored = _trial("unscored", tokens=100, dollars=0.1, quality=0.5)
+    # Neither dominates the other: scored is better subjectively but the
+    # unscored trial is excluded from that comparison axis.
+    assert _ids(pareto_frontier([scored, unscored])) == {"scored", "unscored"}
+
+
+def test_5d_scored_trial_still_dominated_on_objective_axes():
+    """Having a subjective score does not protect a trial from 4D dominance."""
+    dominator = _trial("dom", tokens=50, dollars=0.05, quality=0.9)
+    dominated = _trial("sub", tokens=100, dollars=0.1, quality=0.5)
+    dominated.subjective_score = _ss(1.0)  # best possible subjective
+    # dom strictly dominates sub on all 4 objective axes regardless of subj.
+    assert _ids(pareto_frontier([dominator, dominated])) == {"dom"}
+
+
+def test_5d_both_scored_lower_not_saved_by_better_objectives():
+    """A trial with a lower subjective score that is also worse on all 4
+    objective axes is dominated even in 5D."""
+    better = _trial("better", tokens=50, dollars=0.05, quality=0.9)
+    better.subjective_score = _ss(0.9)
+    worse = _trial("worse", tokens=100, dollars=0.1, quality=0.5)
+    worse.subjective_score = _ss(0.3)
+    assert _ids(pareto_frontier([better, worse])) == {"better"}
+
+
+def test_5d_tradeoff_between_objective_and_subjective():
+    """A trial that wins on subjective but loses on an objective axis is not
+    dominated — the axes trade off."""
+    quality_winner = _trial("quality", tokens=100, dollars=0.1, quality=0.9)
+    quality_winner.subjective_score = _ss(0.5)
+    subj_winner = _trial("subj", tokens=100, dollars=0.1, quality=0.5)
+    subj_winner.subjective_score = _ss(0.9)
+    # quality_winner is better on quality_score; subj_winner is better on
+    # subjective. Neither dominates.
+    assert _ids(pareto_frontier([quality_winner, subj_winner])) == {
+        "quality",
+        "subj",
+    }

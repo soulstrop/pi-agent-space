@@ -54,6 +54,9 @@ def subjective_axis(trial: Trial) -> float | None:
     return trial.subjective_score.score
 
 
+_Axes = tuple[float, float, float, float, float | None]
+
+
 def pareto_frontier(trials: list[Trial]) -> list[Trial]:
     frontier: list[Trial] = []
     for t in trials:
@@ -87,8 +90,12 @@ def add_to_frontier(frontier: list[Trial], new_trial: Trial) -> list[Trial]:
     return survivors
 
 
-def _pareto_axes(trial: Trial) -> tuple[float, float, float, float] | None:
-    """Project a trial onto the 4D Pareto coordinate.
+def _pareto_axes(trial: Trial) -> _Axes | None:
+    """Project a trial onto the 5D Pareto coordinate (Phase 5.4).
+
+    The 5th axis is the subjective score, which is ``None`` when absent.
+    Dominance with a ``None`` subjective follows the 5.3 policy: the axis
+    is excluded when either trial lacks a score (see ``_axes_dominate``).
 
     Returns ``None`` when the trial is ineligible: an error_escalated
     outcome, or a profile missing one of the required axes.
@@ -101,29 +108,42 @@ def _pareto_axes(trial: Trial) -> tuple[float, float, float, float] | None:
     tokens = profile.per_metric["tokens_consumed"]
     dollars = profile.per_metric["cost_dollars"]
     quality = profile.per_metric["quality_score"]
-    return (tokens.mean, dollars.mean, dollars.scaling_slope, quality.mean)
+    return (
+        tokens.mean, dollars.mean, dollars.scaling_slope, quality.mean,
+        subjective_axis(trial),
+    )
 
 
 def _has_required_axes(profile: CapabilityProfile) -> bool:
     return all(axis in profile.per_metric for axis in _REQUIRED_AXES)
 
 
-def _axes_dominate(
-    a: tuple[float, float, float, float],
-    b: tuple[float, float, float, float],
-) -> bool:
-    a_tokens, a_dollars, a_slope, a_quality = a
-    b_tokens, b_dollars, b_slope, b_quality = b
-    no_worse = (
+def _axes_dominate(a: _Axes, b: _Axes) -> bool:
+    """Return True iff ``a`` Pareto-dominates ``b`` in up to 5D.
+
+    Objective axes (tokens, dollars, slope — minimized; quality — maximized)
+    are always evaluated. The subjective axis (5th, maximized) participates
+    only when *both* trials have a score; if either is ``None`` the axis is
+    excluded per Phase 5.3 policy.
+    """
+    a_tokens, a_dollars, a_slope, a_quality, a_subj = a
+    b_tokens, b_dollars, b_slope, b_quality, b_subj = b
+    no_worse_obj = (
         a_tokens <= b_tokens
         and a_dollars <= b_dollars
         and a_slope <= b_slope
         and a_quality >= b_quality
     )
-    strictly_better = (
+    if not no_worse_obj:
+        return False
+    strictly_better_obj = (
         a_tokens < b_tokens
         or a_dollars < b_dollars
         or a_slope < b_slope
         or a_quality > b_quality
     )
-    return no_worse and strictly_better
+    if a_subj is not None and b_subj is not None:
+        if a_subj < b_subj:
+            return False
+        return strictly_better_obj or a_subj > b_subj
+    return strictly_better_obj
