@@ -1,10 +1,11 @@
 """Phase 2 acceptance test: real Pi against 001_binary_search.
 
-Marker-gated and prerequisite-gated:
-  - ``@pytest.mark.acceptance_full`` (ADR 0010) so the default ``mise
-    run test`` skips it. Run via ``mise run test-acceptance-full``.
-    The matching ``acceptance_fast`` variant is filed as follow-up
-    work — see beads issues opened against ADR 0010.
+Marker-gated and prerequisite-gated (ADR 0010):
+  - ``@pytest.mark.acceptance_fast``: 0 retries. Minimal spend.
+    Run via ``uv run pytest -m acceptance_fast``.
+  - ``@pytest.mark.acceptance_full``: default retry budget.
+    Run via ``mise run test-acceptance-full``.
+  Both delegate to ``_run()`` to prevent drift.
   - Skipped at runtime when ``pi`` is not on PATH or no recognised
     provider API key is in the environment.
 
@@ -61,8 +62,8 @@ def _detect_model() -> str | None:
     return None
 
 
-@pytest.mark.acceptance_full
-def test_phase2_acceptance_end_to_end(tmp_path):
+def _run(tmp_path: Path, *, retry_budget: int) -> None:
+    """Shared pipeline-mechanics exercise used by both acceptance variants."""
     if shutil.which("pi") is None:
         pytest.skip("`pi` binary not on PATH")
     model = _detect_model()
@@ -85,7 +86,7 @@ def test_phase2_acceptance_end_to_end(tmp_path):
 
     persistence = PerTrialDirectoryAdapter(tmp_path)
     runner = TrialRunner(
-        harness=CliSubprocessAdapter(pi_binary="pi"),
+        harness=CliSubprocessAdapter(pi_binary="pi", retry_budget=retry_budget),
         scorer=SyntheticSuiteScorer(),
         persistence=persistence,
         suite_source=GraduatedProblemSetAdapter(
@@ -144,3 +145,15 @@ def test_phase2_acceptance_end_to_end(tmp_path):
     # ADR 0007 outcome classification: must be set, must be a known value.
     assert final["outcome"] in {"completed", "boundary_violation", "error_escalated"}
     assert trial.outcome == final["outcome"]
+
+
+@pytest.mark.acceptance_fast
+def test_phase2_acceptance_fast(tmp_path):
+    """ADR 0010 minimal-spend variant: single trial, 0 retries."""
+    _run(tmp_path, retry_budget=0)
+
+
+@pytest.mark.acceptance_full
+def test_phase2_acceptance_end_to_end(tmp_path):
+    """ADR 0010 full variant: single trial, default retry budget."""
+    _run(tmp_path, retry_budget=2)
