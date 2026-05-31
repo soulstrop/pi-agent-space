@@ -6,13 +6,15 @@ optimizer behaves like random search. We verify the loop machinery:
 trials persist, the frontier writes, outcomes are well-typed, and the
 run halts for a known reason.
 
-Marker-gated and prerequisite-gated:
-  - ``@pytest.mark.acceptance_full`` (ADR 0010) so the default ``mise
-    run test`` skips it. Run via ``mise run test-acceptance-full``.
-    The matching ``acceptance_fast`` variant is filed as follow-up
-    work — see beads issues opened against ADR 0010.
-  - Skipped at runtime when ``pi`` is not on PATH or no recognised
-    provider API key is in the environment.
+Marker-gated and prerequisite-gated (ADR 0010):
+  - ``@pytest.mark.acceptance_fast``: 1 trial, 0 retries, 1 problem.
+    Run via ``uv run pytest -m acceptance_fast``.
+  - ``@pytest.mark.acceptance_full``: 4 trials, default retries.
+    Run via ``mise run test-acceptance-full``.
+  Both delegate to ``_run()`` to prevent drift.
+
+Skipped at runtime when ``pi`` is not on PATH or no recognised
+provider API key is in the environment.
 
 The test does NOT assert that any trial actually completed — model
 non-determinism and expired keys can make every trial
@@ -104,8 +106,17 @@ def _slot_space_for(model: str) -> SlotSpace:
     )
 
 
-@pytest.mark.acceptance_full
-def test_phase3_acceptance_end_to_end(tmp_path):
+def _run(
+    tmp_path: Path,
+    *,
+    trial_budget: int,
+    retry_budget: int,
+) -> None:
+    """Shared driver-mechanics exercise used by both acceptance variants.
+
+    Asserts persistence shape, frontier file, and package dedup — the
+    ADR 0006 driver-mechanics contract — regardless of budget size.
+    """
     if shutil.which("pi") is None:
         pytest.skip("`pi` binary not on PATH")
     model = _detect_model()
@@ -118,7 +129,7 @@ def test_phase3_acceptance_end_to_end(tmp_path):
     trials_dir = tmp_path / "trials"
     persistence = PerTrialDirectoryAdapter(trials_dir)
     runner = TrialRunner(
-        harness=CliSubprocessAdapter(pi_binary="pi"),
+        harness=CliSubprocessAdapter(pi_binary="pi", retry_budget=retry_budget),
         scorer=SyntheticSuiteScorer(),
         persistence=persistence,
         suite_source=GraduatedProblemSetAdapter(
@@ -139,10 +150,9 @@ def test_phase3_acceptance_end_to_end(tmp_path):
         version_vector=_versions(),
     )
 
-    result = driver.run(trial_budget=4)
+    result = driver.run(trial_budget=trial_budget)
 
-    # Driver mechanics: every proposed trial materialized on disk.
-    assert len(result.trials) == 4
+    assert len(result.trials) == trial_budget
     assert result.halted_reason in {"budget", "exhausted"}
 
     for trial in result.trials:
@@ -155,14 +165,12 @@ def test_phase3_acceptance_end_to_end(tmp_path):
         assert final["outcome"] in VALID_OUTCOMES
         assert trial.outcome == final["outcome"]
 
-    # Frontier file is present and references only proposed trial IDs.
     frontier_file = trials_dir / "frontier.json"
     assert frontier_file.exists()
     frontier = json.loads(frontier_file.read_text())
     proposed_ids = {t.trial_id for t in result.trials}
     assert set(frontier["trial_ids"]).issubset(proposed_ids)
 
-    # The proposer dedups against history — no two trials share a Package.
     package_signatures = {
         (
             t.package.model,
@@ -173,3 +181,15 @@ def test_phase3_acceptance_end_to_end(tmp_path):
         for t in result.trials
     }
     assert len(package_signatures) == len(result.trials)
+
+
+@pytest.mark.acceptance_fast
+def test_phase3_acceptance_fast(tmp_path):
+    """ADR 0010 minimal-spend variant: 1 trial, 0 retries, 1 problem."""
+    _run(tmp_path, trial_budget=1, retry_budget=0)
+
+
+@pytest.mark.acceptance_full
+def test_phase3_acceptance_end_to_end(tmp_path):
+    """ADR 0010 full variant: 4 trials, default retry budget."""
+    _run(tmp_path, trial_budget=4, retry_budget=2)
