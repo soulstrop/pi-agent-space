@@ -9,8 +9,8 @@ git-cliff = "latest"
 
 
 [tasks.setup]
-description = "Install dependencies and configure git hooks"
-depends = ["setup-python", "setup-hooks"]
+description = "Install dependencies, configure git hooks, bootstrap local agent config"
+depends = ["setup-python", "setup-hooks", "setup-claude-local"]
 
 [tasks.setup-python]
 dir = "python"
@@ -19,6 +19,15 @@ run = "mise run setup"
 [tasks.setup-hooks]
 description = "Point git at .githooks/ so the pre-push linter is active"
 run = "git config core.hooksPath .githooks"
+
+[tasks.setup-claude-local]
+description = "Bootstrap CLAUDE.local.md from example if not already present"
+run = """
+if [ ! -f CLAUDE.local.md ]; then
+  cp CLAUDE.local.md.example CLAUDE.local.md
+  echo "Created CLAUDE.local.md from example. Replace with symlink to your sidecar repo."
+fi
+"""
 
 [tasks.lint]
 description = "Lint all subprojects"

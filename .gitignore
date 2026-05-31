@@ -22,3 +22,6 @@ mermaid-filter.err
 .dolt/
 *.db
 .beads-credential-key
+
+# Private agent instructions (tracked in sidecar repo, symlinked here)
+CLAUDE.local.md
