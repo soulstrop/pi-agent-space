@@ -25,3 +25,8 @@ mermaid-filter.err
 
 # Private agent instructions (tracked in sidecar repo, symlinked here)
 CLAUDE.local.md
+
+# Local AI tooling and session artifacts
+.claude/skills/
+.gemini/
+handoff*.md
