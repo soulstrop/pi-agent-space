@@ -10,7 +10,7 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 *   **Phase 2: Real Pi execution.** Replaced stubs with real adapters: `CliSubprocessAdapter` (running Pi against tempdir-copied workspaces) and `SyntheticSuiteScorer` (deriving metrics from raw telemetry). Introduced validation execution and error classification.
 *   **Phase 3: Multi-config search & basic Pareto.** Implemented the `OptimizerDriver` to run multiple configurations. Introduced a slot/value space schema, a `RandomFromSlotSpace` proposer, and calculated a 3D Pareto frontier (`tokens`, `dollars`, `quality`). Included cost caps and basic circuit breakers.
 
-*The project is currently transitioning into Phase 4.*
+*The project is currently transitioning into Phase 6.*
 
 ---
 
@@ -32,14 +32,14 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 
 ## Phase 5 — Subjective scoring (async, partial)
 
-**Goal.** Subjective scores arrive after a trial closes, retroactively update `final.json`, and the optimizer tolerates partially-scored trials.
+**Goal.** Subjective scores arrive after a trial closes via an out-of-band CLI, and the optimizer tolerates partially-scored trials.
 
-**Deliverable.** A `pi-eval score` CLI accepts a trial id and a subjective rating and writes a `subjective.json` sidecar alongside the trial's `final.json` (ADR 0014).
+**Deliverable.** A `pi-eval score` CLI accepts a trial id and a subjective rating and writes a `subjective.json` sidecar alongside the trial's `final.json` (ADR 0014). `final.json` is objective-only; subjective data never mutates it.
 
 **Steps.**
 
 - **5.1 Subjective-score event schema.** Define the event shape.
-- **5.2 Append-and-finalize.** Implement retroactive updates to `final.json` and `events.jsonl` for `"completed"` trials only. (Depends on resolution of open spikes S001 and S002.)
+- **5.2 Sidecar persistence.** `final.json` is objective-only. `write_subjective_score` writes a `subjective.json` sidecar for `completed` trials only (ADR 0007 §C1). `load_trials` reads the sidecar when present. `pi-eval score` CLI entry point.
 - **5.3 Partial-score policy.** Define explicit policy: missing subjective is excluded from dependent axes.
 - **5.4 Acceptance test.** Verify the optimizer loop handles the transition from objective-only to fully-scored trials. The Pareto frontier lifts from Phase 4's 4D `(mean_tokens, mean_dollars, scaling_slope, mean_quality)` to 5D with the subjective axis; partially-scored trials are excluded from dependent-axis dominance per 5.3.
 
