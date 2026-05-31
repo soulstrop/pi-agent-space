@@ -4,15 +4,21 @@ gemini = "latest"
 pandoc = "latest"
 "pipx:weasyprint" = "latest"
 "aqua:gastownhall/beads" = "latest"
+committed = "latest"
+git-cliff = "latest"
 
 
 [tasks.setup]
-description = "Install dependencies in all subprojects"
-depends = ["setup-python"]
+description = "Install dependencies and configure git hooks"
+depends = ["setup-python", "setup-hooks"]
 
 [tasks.setup-python]
 dir = "python"
 run = "mise run setup"
+
+[tasks.setup-hooks]
+description = "Point git at .githooks/ so the pre-push linter is active"
+run = "git config core.hooksPath .githooks"
 
 [tasks.lint]
 description = "Lint all subprojects"
@@ -61,6 +67,10 @@ run = "mise run build"
 [tasks.build-python]
 dir = "python"
 run = "mise run build"
+
+[tasks.changelog]
+description = "Regenerate CHANGELOG.md from conventional commits via git-cliff"
+run = "git-cliff --output CHANGELOG.md"
 
 [tasks."docs:build"]
 description = "Render architecture docs to PDF in docs/gen/ via pandoc + mermaid-filter"

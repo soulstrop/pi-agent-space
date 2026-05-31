@@ -1,0 +1,33 @@
+# committed configuration — conventional commit enforcement
+# https://github.com/crate-ci/committed
+
+style = "conventional"
+
+# Conventional commit subjects start with a lowercase type prefix ("feat:", "fix:", …)
+subject_capitalized = false
+subject_not_punctuated = true
+imperative_subject = true
+no_fixup = true
+no_wip = true
+
+# 72 chars is the git subject-line standard; our convention.
+subject_length = 72
+hard_line_length = 0
+line_length = 72
+
+# Empty list = any scope accepted.
+allowed_scopes = []
+
+allowed_types = [
+    "feat",
+    "fix",
+    "refactor",
+    "docs",
+    "test",
+    "chore",
+    "style",
+    "perf",
+    "ci",
+]
+
+merge_commit = true
