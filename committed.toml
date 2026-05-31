@@ -28,6 +28,7 @@ allowed_types = [
     "style",
     "perf",
     "ci",
+    "bd",   # beads issue-tracker sync commits (e.g. "bd: update sync.remote")
 ]
 
 merge_commit = true
