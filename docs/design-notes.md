@@ -277,3 +277,33 @@ The scanner does not live behind a port. Outcome-filtering is not a domain opera
 **Timestamp:** Generated at CLI invocation time (UTC ISO-8601) inside the entry point; callers cannot override it in v1. Reconsider if test-harness or batch-scoring needs a deterministic timestamp.
 
 **Related:** [ADR 0014 — Subjective score sidecar](adrs/0014-subjective-score-sidecar.md); `PersistencePort.write_subjective_score`; issue `pi-agent-space-uwt`.
+
+---
+
+### EHVI objective orientation: weighted objective in the acquisition (Phase 6.4)
+
+**Where:** `python/src/pi_evaluator/domain/surrogate_data.py` (`SURROGATE_AXIS_DIRECTIONS`); `python/src/pi_evaluator/adapters/ehvi_acquisition.py` (`WeightedMCMultiOutputObjective`); `python/src/pi_evaluator/adapters/surrogate_proposer.py`.
+
+**Decision:** BoTorch's EHVI maximises every objective, but three of the five surrogate axes are minimised (`mean_tokens`, `mean_dollars`, `scaling_slope` — the cost-cliff axes; `mean_quality` and `subjective` are maximised, mirroring `pareto.py` dominance). The minimise→maximise transform lives **in the acquisition**, driven by a canonical per-axis direction map `SURROGATE_AXIS_DIRECTIONS` (`-1.0` = minimise, `+1.0` = maximise) in the domain.
+
+`EHVIAcquisition` builds a `WeightedMCMultiOutputObjective` from the directions of the fitted axes and passes it to `qLogExpectedHypervolumeImprovement`. The objective is applied to the GP posterior samples; the reference point and Pareto frontier — both received in **raw metric units** from the proposer — are multiplied by the same signs so partitioning and posterior live in one consistent "maximise" space. Callers therefore pass raw values everywhere and never reason about signs.
+
+**Alternative rejected: orient at training time.** Negating the cost axes inside `build_training_data` so the GP trains in maximise space was the other candidate. Rejected because it pollutes the surrogate's semantics — a "surrogate of `mean_tokens`" that predicts `−tokens` is a footgun for every future consumer (diagnostics, logging, a non-EHVI acquisition), and it would force the 6.2 surrogate tests to assert negated values. Keeping the GP in raw units and confining the BoTorch-specific sign convention to the acquisition (the only component that cares about maximise-orientation) preserves clean domain semantics. The direction map is a single source of truth shared by the acquisition and any future acquisition function.
+
+**Reference point:** the proposer derives the per-axis nadir (worst value over the current frontier) in raw units, padded by a 5% margin so the anti-ideal point is strictly dominated by every frontier member (avoids the degenerate zero-hypervolume case when the frontier is a single point). The acquisition then orients it via the same weights.
+
+**Related:** [ADR 0016 — Surrogate modeling framework](adrs/0016-surrogate-modeling-framework.md); `pareto.py` (axis directions); issue `pi-agent-space-pwf`.
+
+---
+
+### Surrogate-directed acquisition uses the 4 objective axes; subjective deferred (Phase 6.4)
+
+**Where:** `python/src/pi_evaluator/adapters/surrogate_proposer.py` (`_ACQ_AXES`).
+
+**Decision:** `SurrogateProposer` runs EHVI over the **four always-present objective axes** (`mean_tokens`, `mean_dollars`, `scaling_slope`, `mean_quality`) and does **not** include the `subjective` axis in the acquisition frontier in v1, even though the surrogate fits a `subjective` head when human scores exist.
+
+**Why:** the EHVI frontier matrix (`pareto_Y`) must be rectangular — one column per axis, a value in every cell. The subjective axis is sparse: only human-scored trials carry it, so most frontier members have no subjective value. Building a frontier matrix with a partially-populated column is ill-defined (drop the rows? impute? exclude the column per-row?), and BoTorch's partitioning takes a dense tensor. The four objective axes are populated together for every eligible trial (`build_training_data` appends all four or none), so a 4-column frontier is always dense and well-defined. Because the four objective axes share the same row count, whenever the surrogate `is_fitted` at all they are all fitted (`subjective` count ≤ objective count), so the acquisition always sees ≥4 objectives.
+
+The surrogate still *learns* a subjective head; it is simply not yet a driver of proposal selection. Lifting subjective into the acquisition (via a sparse-frontier strategy, or a separate scalarisation) is a deliberate future step, not an accident of this implementation.
+
+**Related:** [ADR 0014 — Subjective score sidecar](adrs/0014-subjective-score-sidecar.md); `pareto.py` (5D dominance, where subjective participates only when both trials carry a score); issue `pi-agent-space-pwf`.

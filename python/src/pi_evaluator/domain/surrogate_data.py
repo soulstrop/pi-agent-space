@@ -33,10 +33,22 @@ SURROGATE_AXES: tuple[str, ...] = (
     "subjective",
 )
 
+# Optimisation direction per axis, mirroring pareto.py dominance:
+# cost axes (tokens, dollars, dollar-cost slope) are minimised; quality
+# and subjective score are maximised.  BoTorch EHVI maximises every
+# objective, so EHVIAcquisition multiplies the GP posterior, the frontier,
+# and the reference point by these signs to put everything in "maximise"
+# space (ADR 0016; +1 = maximise, -1 = minimise).
+SURROGATE_AXIS_DIRECTIONS: dict[str, float] = {
+    "mean_tokens": -1.0,
+    "mean_dollars": -1.0,
+    "scaling_slope": -1.0,
+    "mean_quality": 1.0,
+    "subjective": 1.0,
+}
+
 # {axis: (X_rows, Y_values, Y_noise_variances)}
-SurrogateTrainingData = dict[
-    str, tuple[list[list[float]], list[float], list[float]]
-]
+SurrogateTrainingData = dict[str, tuple[list[list[float]], list[float], list[float]]]
 
 # {axis: (posterior_means, posterior_variances)}
 SurrogatePredictions = dict[str, tuple[list[float], list[float]]]
@@ -92,7 +104,4 @@ def build_training_data(
             Y["subjective"].append(trial.subjective_score.score)
             Yvar["subjective"].append(SUBJECTIVE_NOISE_VAR)
 
-    return {
-        axis: (X[axis], Y[axis], Yvar[axis])
-        for axis in SURROGATE_AXES
-    }
+    return {axis: (X[axis], Y[axis], Yvar[axis]) for axis in SURROGATE_AXES}

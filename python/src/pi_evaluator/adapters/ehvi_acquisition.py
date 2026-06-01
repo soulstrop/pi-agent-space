@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..domain.surrogate_data import SURROGATE_AXIS_DIRECTIONS
 from .het_gp_surrogate import HetGPSurrogate
 
 N_MC_SAMPLES_DEFAULT: int = 64
@@ -65,10 +66,13 @@ class EHVIAcquisition:
             Current Pareto-optimal objective values, shape
             [n_frontier, len(fitted_axes)].  Empty means no frontier.
         ref_point:
-            Anti-ideal reference point, shape [len(axes)].  Columns must
-            be in the same order as `axes`.
+            Anti-ideal reference point in raw units, shape [len(axes)].
+            Columns must be in the same order as `axes`.  Orientation
+            (minimise vs maximise) is applied internally from
+            SURROGATE_AXIS_DIRECTIONS, so pass raw metric values.
         axes:
-            Ordered objective-axis names.  Axes not present in the fitted
+            Ordered objective-axis names (must be keys of
+            SURROGATE_AXIS_DIRECTIONS).  Axes not present in the fitted
             surrogate are silently dropped; pareto_Y and ref_point are
             sliced accordingly.
 
@@ -89,6 +93,9 @@ class EHVIAcquisition:
         from botorch.acquisition.multi_objective.logei import (
             qLogExpectedHypervolumeImprovement,
         )
+        from botorch.acquisition.multi_objective.objective import (
+            WeightedMCMultiOutputObjective,
+        )
         from botorch.models.model_list_gp_regression import ModelListGP
         from botorch.sampling.normal import SobolQMCNormalSampler
         from botorch.utils.multi_objective.hypervolume import (
@@ -99,22 +106,38 @@ class EHVIAcquisition:
         # preserving the order of `axes`.
         joint = ModelListGP(*[models[ax] for ax in fitted_axes])
         idx = [axes.index(ax) for ax in fitted_axes]
-        ref = [ref_point[i] for i in idx]
-        Y_t = torch.tensor(
+
+        # Orient to "maximise" space: BoTorch EHVI maximises every objective,
+        # so the weighted objective flips minimised (cost) axes via -1 signs.
+        # The objective transforms the GP posterior; the reference point and
+        # frontier passed in raw units must be multiplied by the same signs
+        # so partitioning and posterior live in the same (objective) space.
+        weights = torch.tensor(
+            [SURROGATE_AXIS_DIRECTIONS[ax] for ax in fitted_axes],
+            dtype=torch.float64,
+        )
+        objective = WeightedMCMultiOutputObjective(weights=weights)
+
+        ref_obj = weights * torch.tensor(
+            [ref_point[i] for i in idx], dtype=torch.float64
+        )
+        Y_obj = weights * torch.tensor(
             [[row[i] for i in idx] for row in pareto_Y], dtype=torch.float64
         )
 
         # Any: FastNondominatedPartitioning is structurally compatible with
         # the NondominatedPartitioning annotation on qLogEHVI but is not a
         # formal subclass — use Any to avoid a false ty diagnostic.
-        partitioning: Any = FastNondominatedPartitioning(
-            ref_point=torch.tensor(ref, dtype=torch.float64), Y=Y_t
-        )
+        partitioning: Any = FastNondominatedPartitioning(ref_point=ref_obj, Y=Y_obj)
         sampler = SobolQMCNormalSampler(
             sample_shape=torch.Size([self.n_mc_samples]), seed=self.seed
         )
         acq = qLogExpectedHypervolumeImprovement(
-            model=joint, ref_point=ref, partitioning=partitioning, sampler=sampler
+            model=joint,
+            ref_point=ref_obj.tolist(),
+            partitioning=partitioning,
+            sampler=sampler,
+            objective=objective,
         )
 
         # q=1: unsqueeze to [n_candidates, 1, feature_dim]

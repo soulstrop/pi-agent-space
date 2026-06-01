@@ -73,9 +73,7 @@ class _PerModelHarness(AgentHarnessPort):
     (harness -> SyntheticSuiteScorer -> Metrics) with deterministic
     per-package behavior."""
 
-    def __init__(
-        self, metrics_by_model: dict[str, tuple[int, float, bool]]
-    ) -> None:
+    def __init__(self, metrics_by_model: dict[str, tuple[int, float, bool]]) -> None:
         self._metrics_by_model = metrics_by_model
 
     def run(
@@ -543,7 +541,7 @@ def test_result_has_run_id(tmp_path):
 def test_run_directory_created_with_expected_files(tmp_path):
     driver, persistence = _driver(tmp_path)
     result = driver.run(trial_budget=2)
-    run_dir = (tmp_path / "trials" / "runs" / result.run_id)
+    run_dir = tmp_path / "trials" / "runs" / result.run_id
     assert run_dir.is_dir()
     assert (run_dir / "run_config.json").exists()
     assert (run_dir / "run_events.jsonl").exists()
@@ -552,6 +550,7 @@ def test_run_directory_created_with_expected_files(tmp_path):
 
 def test_run_events_bracket_the_run(tmp_path):
     import json
+
     driver, _ = _driver(tmp_path)
     result = driver.run(trial_budget=1)
     run_dir = tmp_path / "trials" / "runs" / result.run_id
@@ -568,6 +567,7 @@ def test_run_events_bracket_the_run(tmp_path):
 
 def test_trial_manifest_records_dispatched_and_closed(tmp_path):
     import json
+
     driver, _ = _driver(tmp_path, id_factory=_id_factory())
     result = driver.run(trial_budget=2)
     run_dir = tmp_path / "trials" / "runs" / result.run_id
@@ -583,11 +583,11 @@ def test_trial_manifest_records_dispatched_and_closed(tmp_path):
 
 def test_trial_config_json_contains_run_id(tmp_path):
     import json
+
     driver, _ = _driver(tmp_path, id_factory=_id_factory())
     result = driver.run(trial_budget=1)
     trial_dirs = [
-        d for d in (tmp_path / "trials").iterdir()
-        if d.is_dir() and d.name != "runs"
+        d for d in (tmp_path / "trials").iterdir() if d.is_dir() and d.name != "runs"
     ]
     assert len(trial_dirs) == 1
     config = json.loads((trial_dirs[0] / "config.json").read_text())
@@ -599,9 +599,7 @@ def test_replicates_greater_than_one_not_yet_supported(tmp_path):
     workspace.mkdir()
     persistence = PerTrialDirectoryAdapter(tmp_path / "trials")
     runner = TrialRunner(
-        harness=_PerModelHarness(
-            {"google/gemini-2.5-flash": (100, 0.001, True)}
-        ),
+        harness=_PerModelHarness({"google/gemini-2.5-flash": (100, 0.001, True)}),
         scorer=SyntheticSuiteScorer(),
         persistence=persistence,
         suite_source=_OneProblemSuite(workspace),
@@ -620,3 +618,75 @@ def test_replicates_greater_than_one_not_yet_supported(tmp_path):
             version_vector=_versions(),
             replicates=3,
         )
+
+
+def _three_model_space() -> SlotSpace:
+    return SlotSpace(
+        models=[
+            NamedValue(name="flash", value="google/gemini-2.5-flash"),
+            NamedValue(name="haiku", value="anthropic/claude-haiku-4-5"),
+            NamedValue(name="sonnet", value="anthropic/claude-sonnet-4-6"),
+        ],
+        skills_variants=[NamedValue(name="minimal", value=("read", "write"))],
+        system_prompts=[NamedValue(name="v0", value="be concise")],
+        template_value_variants=[NamedValue(name="default", value={})],
+    )  # cartesian: 3
+
+
+def test_driver_with_surrogate_proposer_completes_three_trial_run(tmp_path):
+    """Acceptance criterion (pi-agent-space-pwf #1): OptimizerDriver wired
+    with the real SurrogateProposer (HetGP + EHVI, RandomFromSlotSpace
+    fallback) completes a 3-trial run without error. The first trials run
+    below the bootstrap threshold (random fallback); once enough history
+    accrues the surrogate fits and EHVI directs selection."""
+    pytest.importorskip("botorch")
+    from pi_evaluator.adapters.ehvi_acquisition import EHVIAcquisition
+    from pi_evaluator.adapters.het_gp_surrogate import HetGPSurrogate
+    from pi_evaluator.adapters.surrogate_proposer import SurrogateProposer
+    from pi_evaluator.domain.featurize import FeatureEncoder
+
+    space = _three_model_space()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    persistence = PerTrialDirectoryAdapter(tmp_path / "trials")
+    runner = TrialRunner(
+        harness=_PerModelHarness(
+            {
+                "google/gemini-2.5-flash": (100, 0.001, True),
+                "anthropic/claude-haiku-4-5": (200, 0.005, True),
+                "anthropic/claude-sonnet-4-6": (400, 0.02, True),
+            }
+        ),
+        scorer=SyntheticSuiteScorer(),
+        persistence=persistence,
+        suite_source=_OneProblemSuite(workspace),
+    )
+    surrogate = HetGPSurrogate(n_bootstrap=2)
+    proposer = SurrogateProposer(
+        surrogate=surrogate,
+        acquisition=EHVIAcquisition(surrogate, n_mc_samples=32, seed=1),
+        encoder=FeatureEncoder(space),
+        slot_space=space,
+        eval_suite_ref=_suite_ref(),
+        version_vector=_versions(),
+        fallback=RandomFromSlotSpace(
+            slot_space=space,
+            eval_suite_ref=_suite_ref(),
+            version_vector=_versions(),
+            rng=random.Random(0),
+        ),
+    )
+    driver = OptimizerDriver(
+        runner=runner,
+        proposer=proposer,
+        persistence=persistence,
+        eval_suite_ref=_suite_ref(),
+        version_vector=_versions(),
+        trial_id_factory=_id_factory(),
+    )
+    result = driver.run(trial_budget=3)
+    assert len(result.trials) == 3
+    assert result.halted_reason == "budget"  # budget consumed exactly
+    assert all(t.outcome == "completed" for t in result.trials)
+    # All three distinct packages were proposed (no repeats).
+    assert len({t.package.model for t in result.trials}) == 3
