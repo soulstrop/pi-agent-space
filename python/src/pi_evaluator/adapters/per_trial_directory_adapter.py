@@ -45,6 +45,23 @@ class PerTrialDirectoryAdapter(PersistencePort):
         self._base.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
+    # I/O primitives
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _append_jsonl(path: Path, obj: dict) -> None:
+        """Append one canonical-JSON line to a .jsonl file."""
+        with path.open("a") as f:
+            f.write(json.dumps(obj, sort_keys=True) + "\n")
+
+    @staticmethod
+    def _write_atomic(path: Path, payload: dict) -> None:
+        """Write pretty-printed JSON via temp-then-rename (ADR 0003)."""
+        tmp = path.parent / (path.name + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        tmp.replace(path)
+
+    # ------------------------------------------------------------------
     # Trial methods
     # ------------------------------------------------------------------
 
@@ -68,8 +85,7 @@ class PerTrialDirectoryAdapter(PersistencePort):
             events_file.write_text("")
 
     def append_event(self, trial_id: str, event: TrialEvent) -> None:
-        with (self._trial_dir(trial_id) / "events.jsonl").open("a") as f:
-            f.write(json.dumps(asdict(event), sort_keys=True) + "\n")
+        self._append_jsonl(self._trial_dir(trial_id) / "events.jsonl", asdict(event))
 
     def finalize_trial(
         self,
@@ -77,34 +93,24 @@ class PerTrialDirectoryAdapter(PersistencePort):
         final_metrics: Metrics,
         outcome: Outcome,
     ) -> None:
-        d = self._trial_dir(trial_id)
-        final = {
-            "metrics": asdict(final_metrics),
-            "outcome": outcome,
-        }
-        tmp = d / "final.json.tmp"
-        tmp.write_text(json.dumps(final, indent=2, sort_keys=True))
-        tmp.replace(d / "final.json")
+        self._write_atomic(
+            self._trial_dir(trial_id) / "final.json",
+            {"metrics": asdict(final_metrics), "outcome": outcome},
+        )
 
     def write_subjective_score(self, trial_id: str, ss: SubjectiveScore) -> None:
         d = self._trial_dir(trial_id)
-        final_file = d / "final.json"
-        final = json.loads(final_file.read_text())
+        final = json.loads((d / "final.json").read_text())
         if final.get("outcome") != "completed":
             raise ValueError(
                 f"write_subjective_score requires outcome=completed; "
                 f"trial {trial_id!r} has outcome={final.get('outcome')!r}"
             )
-        tmp = d / "subjective.json.tmp"
-        tmp.write_text(json.dumps(asdict(ss), indent=2, sort_keys=True))
-        tmp.replace(d / "subjective.json")
+        self._write_atomic(d / "subjective.json", asdict(ss))
 
     def save_frontier(self, trial_ids: list[str]) -> None:
         """Write ``frontier.json`` atomically (temp-then-rename, ADR 0003)."""
-        payload = {"trial_ids": list(trial_ids)}
-        tmp = self._base / "frontier.json.tmp"
-        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
-        tmp.replace(self._base / "frontier.json")
+        self._write_atomic(self._base / "frontier.json", {"trial_ids": list(trial_ids)})
 
     def load_trials(self) -> list[Trial]:
         trials: list[Trial] = []
@@ -175,22 +181,23 @@ class PerTrialDirectoryAdapter(PersistencePort):
                 f.write_text("")
 
     def append_run_event(self, run_id: str, event: RunEvent) -> None:
-        with (self._run_dir(run_id) / "run_events.jsonl").open("a") as f:
-            f.write(json.dumps(asdict(event), sort_keys=True) + "\n")
+        self._append_jsonl(self._run_dir(run_id) / "run_events.jsonl", asdict(event))
 
     def record_trial_dispatched(self, run_id: str, trial_id: str) -> None:
-        entry = {"status": "dispatched", "timestamp": _now(), "trial_id": trial_id}
-        with (self._run_dir(run_id) / "trial_manifest.jsonl").open("a") as f:
-            f.write(json.dumps(entry, sort_keys=True) + "\n")
+        self._append_jsonl(
+            self._run_dir(run_id) / "trial_manifest.jsonl",
+            {"status": "dispatched", "timestamp": _now(), "trial_id": trial_id},
+        )
 
     def record_trial_closed(
         self, run_id: str, trial_id: str, outcome: Outcome
     ) -> None:
-        entry = {
-            "outcome": outcome,
-            "status": "closed",
-            "timestamp": _now(),
-            "trial_id": trial_id,
-        }
-        with (self._run_dir(run_id) / "trial_manifest.jsonl").open("a") as f:
-            f.write(json.dumps(entry, sort_keys=True) + "\n")
+        self._append_jsonl(
+            self._run_dir(run_id) / "trial_manifest.jsonl",
+            {
+                "outcome": outcome,
+                "status": "closed",
+                "timestamp": _now(),
+                "trial_id": trial_id,
+            },
+        )
