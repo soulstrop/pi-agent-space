@@ -31,7 +31,7 @@ becomes pure projection over the event stream (Option C in ADR 0011).
 
 from __future__ import annotations
 
-from .domain.telemetry import assistant_message_ends
+from .domain.telemetry import assistant_messages
 from .domain.types import Outcome, RawTelemetry, TrialEvent
 
 
@@ -43,10 +43,7 @@ def is_model_error(telemetry: RawTelemetry) -> bool:
     """
     if telemetry.exit_code != 0:
         return True
-    return any(
-        message.get("stopReason") == "error"
-        for message in assistant_message_ends(telemetry.events)
-    )
+    return any(m.stop_reason == "error" for m in assistant_messages(telemetry.events))
 
 
 def classify_outcome(

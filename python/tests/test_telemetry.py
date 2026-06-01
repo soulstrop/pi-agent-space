@@ -1,31 +1,46 @@
-"""Tests for domain.telemetry.assistant_message_ends."""
+"""Tests for domain.telemetry.assistant_messages."""
 
 from __future__ import annotations
 
-from pi_evaluator.domain.telemetry import assistant_message_ends
+from pi_evaluator.domain.telemetry import AssistantMessage, assistant_messages
 
 
 def test_empty_stream_returns_empty():
-    assert assistant_message_ends([]) == []
+    assert assistant_messages([]) == []
 
 
 def test_picks_assistant_message_ends_only():
     events = [
-        {"type": "message_end", "message": {"role": "assistant", "x": 1}},
-        {"type": "message_end", "message": {"role": "user", "x": 2}},
-        {"type": "tool_call", "message": {"role": "assistant", "x": 3}},
-        {"type": "message_end", "message": {"role": "assistant", "x": 4}},
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "usage": {"totalTokens": 10, "cost": {"total": 0.5}},
+            },
+        },
+        {
+            "type": "message_end",
+            "message": {"role": "user", "usage": {"totalTokens": 99}},
+        },
+        {"type": "tool_call", "message": {"role": "assistant"}},
+        {
+            "type": "message_end",
+            "message": {"role": "assistant", "stopReason": "error"},
+        },
     ]
-    assert assistant_message_ends(events) == [
-        {"role": "assistant", "x": 1},
-        {"role": "assistant", "x": 4},
+    result = assistant_messages(events)
+    assert result == [
+        AssistantMessage(total_tokens=10, cost_total=0.5, stop_reason=None),
+        AssistantMessage(total_tokens=0, cost_total=0.0, stop_reason="error"),
     ]
 
 
-def test_tolerates_missing_or_null_message():
+def test_tolerates_missing_or_null_subobjects():
     events = [
         {"type": "message_end"},
         {"type": "message_end", "message": None},
-        {"type": "message_end", "message": {"role": "assistant"}},
+        {"type": "message_end", "message": {"role": "assistant", "usage": None}},
     ]
-    assert assistant_message_ends(events) == [{"role": "assistant"}]
+    assert assistant_messages(events) == [
+        AssistantMessage(total_tokens=0, cost_total=0.0, stop_reason=None),
+    ]

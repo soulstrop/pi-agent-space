@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..domain.telemetry import assistant_message_ends
+from ..domain.telemetry import assistant_messages
 from ..domain.types import (
     Metrics,
     RawTelemetry,
@@ -32,33 +32,17 @@ class SyntheticSuiteScorer(ScoringPort):
     """
 
     def score_objective(self, telemetry: RawTelemetry) -> Metrics:
+        messages = assistant_messages(telemetry.events)
         pass_rate = _validation_pass_rate(telemetry)
         return Metrics(
-            tokens_consumed=_sum_assistant_tokens(telemetry.events),
-            cost_dollars=_sum_assistant_cost(telemetry.events),
+            tokens_consumed=sum(m.total_tokens for m in messages),
+            cost_dollars=sum(m.cost_total for m in messages),
             validation_pass_rate=pass_rate,
             quality_score=pass_rate * 1.0,
         )
 
     def score_subjective(self, trial: Trial) -> SubjectiveScore | None:
         return None
-
-
-def _sum_assistant_tokens(events: list[dict]) -> int:
-    total = 0
-    for message in assistant_message_ends(events):
-        usage = message.get("usage") or {}
-        total += int(usage.get("totalTokens", 0))
-    return total
-
-
-def _sum_assistant_cost(events: list[dict]) -> float:
-    total = 0.0
-    for message in assistant_message_ends(events):
-        usage = message.get("usage") or {}
-        cost = usage.get("cost") or {}
-        total += float(cost.get("total", 0))
-    return total
 
 
 def _validation_pass_rate(telemetry: RawTelemetry) -> float:
