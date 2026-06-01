@@ -1,4 +1,7 @@
-"""Filesystem-backed persistence: per-trial and per-run directories (ADR 0003, ADR 0013)."""
+"""Filesystem-backed persistence: per-trial and per-run directories.
+
+ADR 0003, ADR 0013.
+"""
 
 from __future__ import annotations
 

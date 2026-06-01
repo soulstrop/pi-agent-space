@@ -104,8 +104,14 @@ def test_finalize_records_error_escalated_outcome(tmp_path):
 def test_write_subjective_score_creates_sidecar(tmp_path):
     adapter = PerTrialDirectoryAdapter(tmp_path)
     adapter.save_trial(_trial())
-    adapter.finalize_trial("t-001", Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0), "completed")
-    ss = SubjectiveScore(score=0.8, notes="good", scorer="user:me", timestamp="2026-05-30T10:00:00Z")
+    adapter.finalize_trial(
+        "t-001",
+        Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0),
+        "completed",
+    )
+    ss = SubjectiveScore(
+        score=0.8, notes="good", scorer="user:me", timestamp="2026-05-30T10:00:00Z"
+    )
     adapter.write_subjective_score("t-001", ss)
     sidecar = json.loads((tmp_path / "t-001" / "subjective.json").read_text())
     assert sidecar["score"] == 0.8
@@ -118,7 +124,11 @@ def test_write_subjective_score_is_atomic(tmp_path):
     """No partial write: subjective.json appears fully written (temp-then-rename)."""
     adapter = PerTrialDirectoryAdapter(tmp_path)
     adapter.save_trial(_trial())
-    adapter.finalize_trial("t-001", Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0), "completed")
+    adapter.finalize_trial(
+        "t-001",
+        Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0),
+        "completed",
+    )
     ss = SubjectiveScore(score=0.5, notes="", scorer="user:me", timestamp="t")
     adapter.write_subjective_score("t-001", ss)
     assert not (tmp_path / "t-001" / "subjective.json.tmp").exists()
@@ -128,7 +138,11 @@ def test_write_subjective_score_is_atomic(tmp_path):
 def test_write_subjective_score_rejects_boundary_violation(tmp_path):
     adapter = PerTrialDirectoryAdapter(tmp_path)
     adapter.save_trial(_trial())
-    adapter.finalize_trial("t-001", Metrics(tokens_consumed=0, validation_pass_rate=0.0, quality_score=0.0), "boundary_violation")
+    adapter.finalize_trial(
+        "t-001",
+        Metrics(tokens_consumed=0, validation_pass_rate=0.0, quality_score=0.0),
+        "boundary_violation",
+    )
     ss = SubjectiveScore(score=0.5, notes="", scorer="user:me", timestamp="t")
     import pytest
     with pytest.raises(ValueError, match="completed"):
@@ -138,7 +152,11 @@ def test_write_subjective_score_rejects_boundary_violation(tmp_path):
 def test_write_subjective_score_rejects_error_escalated(tmp_path):
     adapter = PerTrialDirectoryAdapter(tmp_path)
     adapter.save_trial(_trial())
-    adapter.finalize_trial("t-001", Metrics(tokens_consumed=0, validation_pass_rate=0.0, quality_score=0.0), "error_escalated")
+    adapter.finalize_trial(
+        "t-001",
+        Metrics(tokens_consumed=0, validation_pass_rate=0.0, quality_score=0.0),
+        "error_escalated",
+    )
     ss = SubjectiveScore(score=0.5, notes="", scorer="user:me", timestamp="t")
     import pytest
     with pytest.raises(ValueError, match="completed"):
@@ -148,8 +166,14 @@ def test_write_subjective_score_rejects_error_escalated(tmp_path):
 def test_load_trials_reads_subjective_from_sidecar(tmp_path):
     adapter = PerTrialDirectoryAdapter(tmp_path)
     adapter.save_trial(_trial())
-    adapter.finalize_trial("t-001", Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0), "completed")
-    ss = SubjectiveScore(score=0.9, notes="excellent", scorer="user:me", timestamp="2026-05-30T11:00:00Z")
+    adapter.finalize_trial(
+        "t-001",
+        Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0),
+        "completed",
+    )
+    ss = SubjectiveScore(
+        score=0.9, notes="excellent", scorer="user:me", timestamp="2026-05-30T11:00:00Z"
+    )
     adapter.write_subjective_score("t-001", ss)
     [loaded] = adapter.load_trials()
     assert loaded.subjective_score == ss
@@ -158,7 +182,11 @@ def test_load_trials_reads_subjective_from_sidecar(tmp_path):
 def test_load_trials_subjective_none_when_no_sidecar(tmp_path):
     adapter = PerTrialDirectoryAdapter(tmp_path)
     adapter.save_trial(_trial())
-    adapter.finalize_trial("t-001", Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0), "completed")
+    adapter.finalize_trial(
+        "t-001",
+        Metrics(tokens_consumed=1, validation_pass_rate=1.0, quality_score=1.0),
+        "completed",
+    )
     [loaded] = adapter.load_trials()
     assert loaded.subjective_score is None
 
@@ -282,7 +310,9 @@ def test_append_run_event_adds_line(tmp_path):
     )
     adapter.append_run_event(
         "run-001",
-        RunEvent(phase="run_halted", timestamp="t2", payload={"halted_reason": "budget"}),
+        RunEvent(
+            phase="run_halted", timestamp="t2", payload={"halted_reason": "budget"}
+        ),
     )
     lines = (
         tmp_path / "runs" / "run-001" / "run_events.jsonl"

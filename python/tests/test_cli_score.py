@@ -23,15 +23,25 @@ def _setup_completed_trial(base: Path, trial_id: str = "t-001") -> None:
     adapter = PerTrialDirectoryAdapter(base)
     t = Trial(
         trial_id=trial_id,
-        package=Package(model="gemini-flash", system_prompt="", skills=[], template_values={}),
+        package=Package(
+            model="gemini-flash", system_prompt="", skills=[], template_values={}
+        ),
         eval_suite_ref=EvalSuiteRef(suite_id="coding_v1", suite_version="1.0.0"),
-        version_vector=VersionVector(pi_version="0.4.2", package_versions={}, eval_suite_version="1.0.0"),
+        version_vector=VersionVector(
+            pi_version="0.4.2", package_versions={}, eval_suite_version="1.0.0"
+        ),
     )
     adapter.save_trial(t)
-    adapter.finalize_trial(trial_id, Metrics(tokens_consumed=10, validation_pass_rate=1.0, quality_score=0.9), "completed")
+    adapter.finalize_trial(
+        trial_id,
+        Metrics(tokens_consumed=10, validation_pass_rate=1.0, quality_score=0.9),
+        "completed",
+    )
 
 
-def _run_score_cmd(base: Path, trial_id: str, score: str, scorer: str, notes: str = "") -> subprocess.CompletedProcess[str]:
+def _run_score_cmd(
+    base: Path, trial_id: str, score: str, scorer: str, notes: str = ""
+) -> subprocess.CompletedProcess[str]:
     cmd = [
         sys.executable, "-m", "pi_evaluator.cli.score",
         "--base-dir", str(base),
@@ -77,12 +87,20 @@ class TestScoreCLIErrorCases:
         adapter = PerTrialDirectoryAdapter(tmp_path)
         t = Trial(
             trial_id="t-bad",
-            package=Package(model="gemini-flash", system_prompt="", skills=[], template_values={}),
+            package=Package(
+                model="gemini-flash", system_prompt="", skills=[], template_values={}
+            ),
             eval_suite_ref=EvalSuiteRef(suite_id="coding_v1", suite_version="1.0.0"),
-            version_vector=VersionVector(pi_version="0.4.2", package_versions={}, eval_suite_version="1.0.0"),
+            version_vector=VersionVector(
+                pi_version="0.4.2", package_versions={}, eval_suite_version="1.0.0"
+            ),
         )
         adapter.save_trial(t)
-        adapter.finalize_trial("t-bad", Metrics(tokens_consumed=0, validation_pass_rate=0.0, quality_score=0.0), "boundary_violation")
+        adapter.finalize_trial(
+            "t-bad",
+            Metrics(tokens_consumed=0, validation_pass_rate=0.0, quality_score=0.0),
+            "boundary_violation",
+        )
         result = _run_score_cmd(tmp_path, "t-bad", "0.5", "user:alice")
         assert result.returncode != 0
 
