@@ -26,7 +26,6 @@ from pi_evaluator.domain.types import (
     VersionVector,
 )
 
-
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
 

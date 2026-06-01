@@ -6,6 +6,8 @@ Skips if botorch is not importable.  All tests use small n_mc_samples
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 botorch = pytest.importorskip("botorch")
@@ -289,7 +291,10 @@ def test_agrees_with_botorch_reference():
     objective = WeightedMCMultiOutputObjective(weights=weights)
     ref_obj = weights * torch.tensor(ref_point, dtype=torch.float64)
     Y_obj = weights * torch.tensor(pareto_Y, dtype=torch.float64)
-    partitioning = FastNondominatedPartitioning(ref_point=ref_obj, Y=Y_obj)
+    # Any: FastNondominatedPartitioning is structurally compatible with
+    # the NondominatedPartitioning annotation on qLogEHVI but is not a
+    # formal subclass — use Any to avoid a false ty diagnostic.
+    partitioning: Any = FastNondominatedPartitioning(ref_point=ref_obj, Y=Y_obj)
     sampler = SobolQMCNormalSampler(sample_shape=torch.Size([_N_MC]), seed=99)
     ref_acq = qLogExpectedHypervolumeImprovement(
         model=joint,

@@ -6,7 +6,6 @@ import json
 import logging
 import re
 
-
 from pi_evaluator.logging_config import JsonFormatter
 
 
