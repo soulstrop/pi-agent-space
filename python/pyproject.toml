@@ -32,6 +32,13 @@ markers = [
     "acceptance_full: real-Pi acceptance test at production-default budget (ADR 0010)",
 ]
 addopts = "-m 'not acceptance_fast and not acceptance_full'"
+filterwarnings = [
+    # Transitive GPyTorch-on-torch deprecation: GPyTorch/linear_operator
+    # still use torch.jit.script, which newer torch flags. Not our code;
+    # resolves on a future GPyTorch/torch bump. Targeted ignore only — see
+    # the dependency-deprecation watch issue. (ADR 0016 torch stack.)
+    "ignore:`torch.jit.script` is deprecated:DeprecationWarning",
+]
 
 [tool.ruff.lint]
 # Defaults (E, F, W) plus pyupgrade (UP) for modernizations such as
