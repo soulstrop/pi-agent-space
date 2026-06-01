@@ -2,7 +2,7 @@
 
 **Status:** Proposed
 
-> Spike in progress; decision target **Phase 7** (first post-v1 phase). Decision, Consequences, and Reconsider Triggers read `TBD` until the spike closes.
+> Spike in progress; decision target **Phase 7** (the production-readiness phase that completes v1). Decision, Consequences, and Reconsider Triggers read `TBD` until the spike closes.
 
 ## Context
 
@@ -49,7 +49,7 @@ Leave the boundary untyped; rely on tests and the `metric_record` event-shape as
 * **Pros:** Zero work, zero risk, no format question. The defensive reads are arguably *appropriate* for a robust projection over a heterogeneous, possibly-partial stream.
 * **Cons:** Preserves the silent producer/consumer coupling that motivated `3kz`. The boundary stays the least-typed surface in an otherwise typed domain.
 
-## Versioning interaction (why this is a Phase 7 / post-v1 item)
+## Versioning interaction (why this is a Phase 7 / schema-governance item)
 
 Options 1–3 all touch how the persisted event streams are read and written. Even the "format-preserving" options (1, 2) change the *contract* between code versions: once payloads are typed, a field rename or a new required field is a format-compatibility event for any trial directory already on disk. That makes this decision a dependency of — not independent from — the project's **versioning / compatibility policy**: what does a SemVer bump *mean* for the on-disk trial/event schema, and do we promise to read trial directories written by older versions? That policy question is itself unresolved (it belongs on the Phase 7 list) and should be settled, or at least sketched, before a typed-payload model that affects the wire format is accepted. The `RawTelemetry` half did not raise this because Pi owns that schema and we never persist it.
 

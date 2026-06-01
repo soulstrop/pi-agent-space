@@ -10,7 +10,7 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 *   **Phase 2: Real Pi execution.** Replaced stubs with real adapters: `CliSubprocessAdapter` (running Pi against tempdir-copied workspaces) and `SyntheticSuiteScorer` (deriving metrics from raw telemetry). Introduced validation execution and error classification.
 *   **Phase 3: Multi-config search & basic Pareto.** Implemented the `OptimizerDriver` to run multiple configurations. Introduced a slot/value space schema, a `RandomFromSlotSpace` proposer, and calculated a 3D Pareto frontier (`tokens`, `dollars`, `quality`). Included cost caps and basic circuit breakers.
 
-*Phases 4–6 are complete: the v1 tracer-bullet pipeline runs end to end, from real-Pi trials through capability profiles, subjective scoring, and a surrogate-directed proposer. The project is now scoping Phase 7, the first post-v1 phase (see below).*
+*Phases 4–6 are complete: the v1 tracer-bullet pipeline runs end to end, from real-Pi trials through capability profiles, subjective scoring, and a surrogate-directed proposer. The project is now in Phase 7 — production readiness — the final v1 phase, which establishes the surface (deployment, observability, security, schema/versioning, surrogate robustness) that v1 commits to (see below).*
 
 ---
 
@@ -61,14 +61,19 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 
 ---
 
-## Phase 7 — First post-v1 phase (scope and versioning TBD)
+## Phase 7 — Production readiness (completes v1)
 
-**Status.** Planning. Phases 1–6 delivered the v1 tracer-bullet pipeline end to end. Phase 7 is the first phase *beyond* v1; its concrete scope is not yet committed, and the project's versioning posture — whether work here opens a **v1.1** or a **v2** — is itself an open question to settle at the phase boundary.
+**Goal.** Phases 1–6 delivered the v1 tracer-bullet pipeline end to end. Phase 7 is the **final v1 phase**: not new optimizer features, but the production hardening that turns the pipeline into a surface we commit to. Drawing the v1 line *here* — rather than after Phase 6 — means the committed surface includes deployment, observability, security, schema/versioning, and surrogate-robustness guarantees, not just the happy-path algorithm.
 
-**Candidate items for consideration (not yet committed):**
+**Deliverable.** A v1 that is deployable, observable, security-reviewed, and explicit about the on-disk/API surface it promises to keep stable.
 
-- **Typed event-payload model — ADR 0017 (Proposed).** Replace the untyped `Event.payload: dict` across the trial/run event streams with a typed model. This is the remaining half of `pi-agent-space-3kz` (the `RawTelemetry.events` half is done). It is architectural rather than mechanical because it touches the persisted on-disk format, so it is **gated on the versioning policy below**.
-- **Versioning & on-disk compatibility policy.** Define what SemVer means for `pi-agent-space` — and specifically whether a release promises to read trial directories and event streams written by *older* versions. This is a prerequisite for any change that affects the persisted wire format (e.g. ADR 0017) and shapes whether post-v1 work is versioned as v1.1 or v2.
+**Workstreams (scope per stream settled at its spike/ADR):**
+
+- **Containerization & deployment baseline.** Establish the runtime container posture (the torch baseline ADR 0016 deferred). Spike S006. Distinct from the stronger workspace-isolation containers still deferred below.
+- **Observability suite.** Logging, tracing, and metrics as a coherent set, extending ADR 0015 (structured-logging depth). Spike S007.
+- **Security pass & threat model.** A `docs/threat-model.md` and the hardening it implies; relates to containerization and the open agent-isolation issue. Spike S008.
+- **Schema governance & versioning.** The umbrella over the typed event-payload model (ADR 0017 / spike S004) and the SemVer/compatibility policy (spike S005): what schemas (package, eval-suite, event streams, persisted layouts) we govern, and what a version bump promises about reading data written by older versions. This is what makes "the committed surface" concrete.
+- **Surrogate numerical-robustness posture.** ADR 0018 — float64 mandate and Cholesky-jitter backstop are done; the batched multi-output GP / parallel-head decision (spike S009) lands here.
 
 ---
 
@@ -81,6 +86,10 @@ Spikes use a separate `S###` ID namespace so the planned-spike list and the ADR 
 | S003 | **Boundary-violated trials visibility.** Should the surrogate see filtered boundary-violated trials as cliff signals? | Phase 6.2 | — | Open |
 | S004 | **Typed event-payload model.** What typed model replaces `Event.payload: dict`, and how does it serialize without breaking on-disk format compatibility? | Phase 7 | 0017 | Open |
 | S005 | **Versioning & compatibility policy.** What does SemVer mean for `pi-agent-space`, and does a release promise to read trial directories written by older versions? Gates wire-format changes (S004). | Phase 7 | — | Open |
+| S006 | **Containerization & deployment baseline.** What runtime container posture do we ship (the torch baseline ADR 0016 deferred)? | Phase 7 | — | Open |
+| S007 | **Observability suite.** What logging/tracing/metrics surface do we commit to, extending ADR 0015? | Phase 7 | — | Open |
+| S008 | **Security pass & threat model.** What is the v1 threat model, and what hardening does it imply (agent isolation, secret handling)? | Phase 7 | — | Open |
+| S009 | **Batched multi-output GP.** Fit the 4 shared-`train_X` objective heads as one multi-output model (parallel LML, simpler EHVI seam)? Revisits ADR 0016. | Phase 7 | 0018 | Open |
 
 ## What's deferred (not in v1)
 
