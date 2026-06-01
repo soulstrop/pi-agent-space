@@ -1,0 +1,175 @@
+\documentclass[11pt, letterpaper]{article}
+
+% Essential Packages
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{bm}
+\usepackage{microtype}
+
+% Page Margins
+\geometry{left=1in, right=1in, top=1in, bottom=1in}
+
+% Theorem Styles
+\theoremstyle{definition}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\newtheorem{remark}[theorem]{Remark}
+
+% Custom Math Macros (Example)
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\C}{\mathbb{C}}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\Q}{\mathbb{Q}}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\diag}{diag}
+
+\begin{document}
+
+\section*{Phase 6.2 — Heteroscedastic GP Surrogate}
+
+\subsection*{Feature map}
+
+Let $\mathcal{P}$ denote the space of \textsc{Package} configurations.
+A package $p \in \mathcal{P}$ is encoded as a fixed-length feature vector
+
+\[
+  \bm{x} = \varphi(p) \in \mathbb{R}^{d}
+\]
+
+where $\varphi$ concatenates one-hot encodings of the model slot, a binary
+skill-presence vector, and one-hot encodings of the named system-prompt and
+template-value variants (the Phase~3.1 slot-space schema).
+
+\subsection*{Observations}
+
+After $N$ completed trials we have a dataset
+$\mathcal{D}_N = \{(\bm{x}_i, \bm{y}_i)\}_{i=1}^{N}$ where each
+$\bm{y}_i \in \mathbb{R}^{5}$ records the five Pareto-axis values
+
+\[
+  \bm{y}_i =
+  \bigl(
+    \bar{\tau}_i,\;
+    \bar{c}_i,\;
+    s_i,\;
+    \bar{q}_i,\;
+    r_i
+  \bigr)
+  \qquad
+  \text{(tokens, dollars, scaling slope, quality, subjective)}
+\]
+
+Trials without a subjective score contribute only the first four components;
+the subjective head is trained on the subset of fully-scored trials.
+
+\subsection*{Heteroscedastic single-task GP (per output head)}
+
+For each output $j \in \{1,\ldots,5\}$ we place an independent GP prior:
+
+\[
+  f^{(j)}(\bm{x}) \sim \mathcal{GP}\!\left(0,\; k^{(j)}(\bm{x}, \bm{x}')\right)
+\]
+
+with a squared-exponential (RBF-ARD) kernel
+
+\[
+  k^{(j)}(\bm{x}, \bm{x}') =
+  \sigma_{f,j}^{2} \exp\!\left(
+    -\tfrac{1}{2}(\bm{x} - \bm{x}')^{\top}
+    \bm{\Lambda}_j^{-1}
+    (\bm{x} - \bm{x}')
+  \right)
+\]
+
+where $\bm{\Lambda}_j = \operatorname{diag}(\ell_{j,1}^{2}, \ldots, \ell_{j,d}^{2})$
+are per-dimension length-scales (automatic relevance determination).
+
+\paragraph{Input-dependent noise.}
+Rather than assuming a fixed noise level, we model the log noise variance
+with a second GP:
+
+\[
+  g^{(j)}(\bm{x}) \sim \mathcal{GP}\!\left(0,\; k_{\varepsilon}^{(j)}(\bm{x},\bm{x}')\right)
+  \qquad
+  \sigma^{2,(j)}(\bm{x}) = \exp\!\left(g^{(j)}(\bm{x})\right)
+\]
+
+The observation model is then
+
+\[
+  y_i^{(j)} = f^{(j)}(\bm{x}_i) + \varepsilon_i^{(j)},
+  \qquad
+  \varepsilon_i^{(j)} \sim \mathcal{N}\!\left(0,\; \sigma^{2,(j)}(\bm{x}_i)\right)
+\]
+
+\subsection*{Posterior}
+
+Let $\bm{X} = [\bm{x}_1,\ldots,\bm{x}_N]^{\top}$,
+$\bm{y}^{(j)} = [y_1^{(j)},\ldots,y_N^{(j)}]^{\top}$, and
+$\bm{\Sigma}^{(j)} = \operatorname{diag}\!\left(\sigma^{2,(j)}(\bm{x}_1),\ldots,\sigma^{2,(j)}(\bm{x}_N)\right)$.
+
+The posterior over $f^{(j)}$ at a new point $\bm{x}_*$ is Gaussian:
+
+\begin{align}
+  \mu_N^{(j)}(\bm{x}_*)
+    &= \bm{k}_*^{(j)\top}
+       \left[\bm{K}^{(j)} + \bm{\Sigma}^{(j)}\right]^{-1}
+       \bm{y}^{(j)} \\[4pt]
+  \sigma_N^{2,(j)}(\bm{x}_*)
+    &= k^{(j)}(\bm{x}_*,\bm{x}_*)
+      - \bm{k}_*^{(j)\top}
+        \left[\bm{K}^{(j)} + \bm{\Sigma}^{(j)}\right]^{-1}
+        \bm{k}_*^{(j)}
+\end{align}
+
+where $\bm{K}^{(j)}_{ij} = k^{(j)}(\bm{x}_i, \bm{x}_j)$ and
+$\bm{k}_*^{(j)} = [k^{(j)}(\bm{x}_*, \bm{x}_i)]_{i=1}^N$.
+
+Hyperparameters
+$\theta_j = \{\sigma_{f,j}^2,\, \bm{\Lambda}_j,\, \theta_{\varepsilon,j}\}$
+are optimised by maximising the log marginal likelihood.
+
+\subsection*{Bootstrap discipline}
+
+Define the trial count threshold $N_0 \approx 10$.  The proposer operates
+in two regimes:
+
+\[
+  \text{next proposal} =
+  \begin{cases}
+    \texttt{RandomFromSlotSpace} & N < N_0 \\[4pt]
+    \argmax_{\bm{x} \in \mathcal{X}}
+      \;\alpha_{\mathrm{EHVI}}\!\left(\bm{x};\,\mathcal{D}_N\right)
+    & N \geq N_0
+  \end{cases}
+\]
+
+where $\mathcal{X}$ is the discrete set of un-evaluated packages and
+$\alpha_{\mathrm{EHVI}}$ is the expected hypervolume improvement over the
+current 5D Pareto frontier (Phase~6.3).
+
+\subsection*{Note}
+
+A few design notes embedded in the math:
+
+\begin{itemize}
+  \item \textbf{ARD kernel:} length-scales $\ell_{j,k}$ let the model learn which slots
+  actually matter per axis — useful since model is likely far more
+  predictive of dollars than \texttt{system\_prompt}.
+  \item \textbf{Independent heads:} simpler than a multi-task GP and sufficient
+  here; cross-axis correlations (e.g. tokens $\leftrightarrow$ dollars) can be
+  captured later if needed.
+  \item \textbf{Heteroscedastic noise:} the subjective head in particular will have
+  high variance at low trial counts and should narrow as more scores
+  arrive — homoscedastic noise would mask that. 
+  \item \textbf{Bootstrap at $N_0 \approx 10$:} the GP is unreliable below this; pure random
+  exploration avoids over-exploiting a badly-conditioned posterior.
+\end{itemize}
+\end{document}
