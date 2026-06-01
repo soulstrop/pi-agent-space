@@ -32,13 +32,16 @@ assertion honest regardless.
 from __future__ import annotations
 
 import json
-import os
 import random
-import shutil
 from dataclasses import asdict
 from pathlib import Path
 
 import pytest
+from acceptance_support import (
+    GRADUATED_PROBLEMS_DIR,
+    VALID_OUTCOMES,
+    require_pi_and_model,
+)
 
 from pi_evaluator.adapters.cli_subprocess_adapter import CliSubprocessAdapter
 from pi_evaluator.adapters.ehvi_acquisition import EHVIAcquisition
@@ -66,27 +69,9 @@ from pi_evaluator.domain.types import (
 from pi_evaluator.optimizer_driver import OptimizerDriver
 from pi_evaluator.trial_runner import TrialRunner
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-GRADUATED_PROBLEMS_DIR = REPO_ROOT / "graduated_problems"
-
-_PROVIDER_FALLBACKS: list[tuple[str, str]] = [
-    ("GEMINI_API_KEY", "google/gemini-2.5-flash"),
-    ("ANTHROPIC_API_KEY", "anthropic/claude-haiku-4-5"),
-    ("OPENAI_API_KEY", "openai/gpt-4o-mini"),
-]
-
-VALID_OUTCOMES = {"completed", "boundary_violation", "error_escalated"}
-
 # Low enough that a handful of cheap stub seeds crosses it.
 _N_BOOTSTRAP = 3
 _N_SEED = 4
-
-
-def _detect_model() -> str | None:
-    for env_var, model in _PROVIDER_FALLBACKS:
-        if os.environ.get(env_var):
-            return model
-    return None
 
 
 def _suite_ref() -> EvalSuiteRef:
@@ -155,6 +140,10 @@ def _seed_history(trials_dir: Path, packages: list[Package]) -> None:
     Tokens/cost/quality vary slightly per package so the GP heads see
     spread rather than a single constant.
     """
+    persistence = PerTrialDirectoryAdapter(trials_dir)
+    suite = GraduatedProblemSetAdapter(
+        GRADUATED_PROBLEMS_DIR, problem_ids=["001_binary_search"]
+    )
     for i, pkg in enumerate(packages):
         runner = TrialRunner(
             harness=StubAgentHarnessAdapter(),
@@ -163,24 +152,14 @@ def _seed_history(trials_dir: Path, packages: list[Package]) -> None:
                 dollars=0.40 + i * 0.05,
                 quality=0.55 + i * 0.03,
             ),
-            persistence=PerTrialDirectoryAdapter(trials_dir),
-            suite_source=GraduatedProblemSetAdapter(
-                GRADUATED_PROBLEMS_DIR, problem_ids=["001_binary_search"]
-            ),
+            persistence=persistence,
+            suite_source=suite,
         )
         runner.run_trial(f"seed-{i:02d}", pkg, _suite_ref(), _versions())
 
 
 def _run(tmp_path: Path, *, trial_budget: int, retry_budget: int) -> None:
-    if shutil.which("pi") is None:
-        pytest.skip("`pi` binary not on PATH")
-    model = _detect_model()
-    if model is None:
-        pytest.skip(
-            "no provider API key found "
-            f"(looked for: {', '.join(v for v, _ in _PROVIDER_FALLBACKS)})"
-        )
-
+    model = require_pi_and_model()
     slot_space = _slot_space_for(model)
     all_packages = list(slot_space.iter_packages())
     seed_packages = all_packages[:_N_SEED]

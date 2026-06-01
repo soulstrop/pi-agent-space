@@ -28,11 +28,10 @@ the test flaky against model nondeterminism.
 from __future__ import annotations
 
 import json
-import os
-import shutil
 from pathlib import Path
 
 import pytest
+from acceptance_support import GRADUATED_PROBLEMS_DIR, require_pi_and_model
 
 from pi_evaluator.adapters.cli_subprocess_adapter import CliSubprocessAdapter
 from pi_evaluator.adapters.graduated_problem_set_adapter import (
@@ -43,35 +42,10 @@ from pi_evaluator.adapters.synthetic_suite_scorer import SyntheticSuiteScorer
 from pi_evaluator.domain.types import EvalSuiteRef, Package, VersionVector
 from pi_evaluator.trial_runner import TrialRunner
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-GRADUATED_PROBLEMS_DIR = REPO_ROOT / "graduated_problems"
-
-# Order is preference — first available key wins. Each entry maps an
-# API-key env var to a Pi "provider/model" string.
-_PROVIDER_FALLBACKS: list[tuple[str, str]] = [
-    ("GEMINI_API_KEY", "google/gemini-2.5-flash"),
-    ("ANTHROPIC_API_KEY", "anthropic/claude-haiku-4-5"),
-    ("OPENAI_API_KEY", "openai/gpt-4o-mini"),
-]
-
-
-def _detect_model() -> str | None:
-    for env_var, model in _PROVIDER_FALLBACKS:
-        if os.environ.get(env_var):
-            return model
-    return None
-
 
 def _run(tmp_path: Path, *, retry_budget: int) -> None:
     """Shared pipeline-mechanics exercise used by both acceptance variants."""
-    if shutil.which("pi") is None:
-        pytest.skip("`pi` binary not on PATH")
-    model = _detect_model()
-    if model is None:
-        pytest.skip(
-            "no provider API key found "
-            f"(looked for: {', '.join(v for v, _ in _PROVIDER_FALLBACKS)})"
-        )
+    model = require_pi_and_model()
 
     package = Package(
         model=model,

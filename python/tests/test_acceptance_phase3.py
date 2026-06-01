@@ -25,12 +25,15 @@ exercise per ADR 0007's outcome enumeration.
 from __future__ import annotations
 
 import json
-import os
 import random
-import shutil
 from pathlib import Path
 
 import pytest
+from acceptance_support import (
+    GRADUATED_PROBLEMS_DIR,
+    VALID_OUTCOMES,
+    require_pi_and_model,
+)
 
 from pi_evaluator.adapters.cli_subprocess_adapter import CliSubprocessAdapter
 from pi_evaluator.adapters.graduated_problem_set_adapter import (
@@ -43,24 +46,6 @@ from pi_evaluator.domain.slot_space import NamedValue, SlotSpace
 from pi_evaluator.domain.types import EvalSuiteRef, VersionVector
 from pi_evaluator.optimizer_driver import OptimizerDriver
 from pi_evaluator.trial_runner import TrialRunner
-
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-GRADUATED_PROBLEMS_DIR = REPO_ROOT / "graduated_problems"
-
-_PROVIDER_FALLBACKS: list[tuple[str, str]] = [
-    ("GEMINI_API_KEY", "google/gemini-2.5-flash"),
-    ("ANTHROPIC_API_KEY", "anthropic/claude-haiku-4-5"),
-    ("OPENAI_API_KEY", "openai/gpt-4o-mini"),
-]
-
-VALID_OUTCOMES = {"completed", "boundary_violation", "error_escalated"}
-
-
-def _detect_model() -> str | None:
-    for env_var, model in _PROVIDER_FALLBACKS:
-        if os.environ.get(env_var):
-            return model
-    return None
 
 
 def _suite_ref() -> EvalSuiteRef:
@@ -117,14 +102,7 @@ def _run(
     Asserts persistence shape, frontier file, and package dedup — the
     ADR 0006 driver-mechanics contract — regardless of budget size.
     """
-    if shutil.which("pi") is None:
-        pytest.skip("`pi` binary not on PATH")
-    model = _detect_model()
-    if model is None:
-        pytest.skip(
-            "no provider API key found "
-            f"(looked for: {', '.join(v for v, _ in _PROVIDER_FALLBACKS)})"
-        )
+    model = require_pi_and_model()
 
     trials_dir = tmp_path / "trials"
     persistence = PerTrialDirectoryAdapter(trials_dir)
