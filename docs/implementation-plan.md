@@ -10,7 +10,7 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 *   **Phase 2: Real Pi execution.** Replaced stubs with real adapters: `CliSubprocessAdapter` (running Pi against tempdir-copied workspaces) and `SyntheticSuiteScorer` (deriving metrics from raw telemetry). Introduced validation execution and error classification.
 *   **Phase 3: Multi-config search & basic Pareto.** Implemented the `OptimizerDriver` to run multiple configurations. Introduced a slot/value space schema, a `RandomFromSlotSpace` proposer, and calculated a 3D Pareto frontier (`tokens`, `dollars`, `quality`). Included cost caps and basic circuit breakers.
 
-*The project is currently transitioning into Phase 6.*
+*Phases 4–6 are complete: the v1 tracer-bullet pipeline runs end to end, from real-Pi trials through capability profiles, subjective scoring, and a surrogate-directed proposer. The project is now scoping Phase 7, the first post-v1 phase (see below).*
 
 ---
 
@@ -61,6 +61,17 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 
 ---
 
+## Phase 7 — First post-v1 phase (scope and versioning TBD)
+
+**Status.** Planning. Phases 1–6 delivered the v1 tracer-bullet pipeline end to end. Phase 7 is the first phase *beyond* v1; its concrete scope is not yet committed, and the project's versioning posture — whether work here opens a **v1.1** or a **v2** — is itself an open question to settle at the phase boundary.
+
+**Candidate items for consideration (not yet committed):**
+
+- **Typed event-payload model — ADR 0017 (Proposed).** Replace the untyped `Event.payload: dict` across the trial/run event streams with a typed model. This is the remaining half of `pi-agent-space-3kz` (the `RawTelemetry.events` half is done). It is architectural rather than mechanical because it touches the persisted on-disk format, so it is **gated on the versioning policy below**.
+- **Versioning & on-disk compatibility policy.** Define what SemVer means for `pi-agent-space` — and specifically whether a release promises to read trial directories and event streams written by *older* versions. This is a prerequisite for any change that affects the persisted wire format (e.g. ADR 0017) and shapes whether post-v1 work is versioned as v1.1 or v2.
+
+---
+
 ## Open spikes
 
 Spikes use a separate `S###` ID namespace so the planned-spike list and the ADR list never collide. When a spike is opened as a real ADR, fill in the ADR column; when the spike closes, remove the row.
@@ -68,6 +79,8 @@ Spikes use a separate `S###` ID namespace so the planned-spike list and the ADR 
 | Spike | Question | Target phase | ADR (if opened) | Status |
 | --- | --- | --- | --- | --- |
 | S003 | **Boundary-violated trials visibility.** Should the surrogate see filtered boundary-violated trials as cliff signals? | Phase 6.2 | — | Open |
+| S004 | **Typed event-payload model.** What typed model replaces `Event.payload: dict`, and how does it serialize without breaking on-disk format compatibility? | Phase 7 | 0017 | Open |
+| S005 | **Versioning & compatibility policy.** What does SemVer mean for `pi-agent-space`, and does a release promise to read trial directories written by older versions? Gates wire-format changes (S004). | Phase 7 | — | Open |
 
 ## What's deferred (not in v1)
 
