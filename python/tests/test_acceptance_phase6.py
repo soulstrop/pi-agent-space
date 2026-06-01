@@ -52,6 +52,7 @@ from pi_evaluator.adapters.het_gp_surrogate import HetGPSurrogate
 from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryAdapter
 from pi_evaluator.adapters.random_from_slot_space import RandomFromSlotSpace
 from pi_evaluator.adapters.stub_agent_harness_adapter import StubAgentHarnessAdapter
+from pi_evaluator.adapters.stub_scorer import StubScorer
 from pi_evaluator.adapters.surrogate_proposer import SurrogateProposer
 from pi_evaluator.adapters.synthetic_suite_scorer import SyntheticSuiteScorer
 from pi_evaluator.domain.featurize import FeatureEncoder
@@ -61,9 +62,6 @@ from pi_evaluator.domain.types import (
     EvalSuiteRef,
     Metrics,
     Package,
-    RawTelemetry,
-    SubjectiveScore,
-    Trial,
     VersionVector,
 )
 from pi_evaluator.optimizer_driver import OptimizerDriver
@@ -109,24 +107,6 @@ def _slot_space_for(model: str) -> SlotSpace:
     )
 
 
-class _FixedScorer:
-    """Returns constant token-heavy metrics — used only for stub seeding."""
-
-    def __init__(self, tokens: int, dollars: float, quality: float) -> None:
-        self._m = Metrics(
-            tokens_consumed=tokens,
-            cost_dollars=dollars,
-            validation_pass_rate=quality,
-            quality_score=quality,
-        )
-
-    def score_objective(self, telemetry: RawTelemetry) -> Metrics:
-        return self._m
-
-    def score_subjective(self, trial: Trial) -> SubjectiveScore | None:
-        return None
-
-
 def _identity(package: Package) -> str:
     return candidate_identity(
         asdict(package), asdict(_suite_ref()), asdict(_versions())
@@ -145,12 +125,16 @@ def _seed_history(trials_dir: Path, packages: list[Package]) -> None:
         GRADUATED_PROBLEMS_DIR, problem_ids=["001_binary_search"]
     )
     for i, pkg in enumerate(packages):
+        quality = 0.55 + i * 0.03
         runner = TrialRunner(
             harness=StubAgentHarnessAdapter(),
-            scorer=_FixedScorer(
-                tokens=5000 + i * 800,
-                dollars=0.40 + i * 0.05,
-                quality=0.55 + i * 0.03,
+            scorer=StubScorer(
+                metrics=Metrics(
+                    tokens_consumed=5000 + i * 800,
+                    cost_dollars=0.40 + i * 0.05,
+                    validation_pass_rate=quality,
+                    quality_score=quality,
+                )
             ),
             persistence=persistence,
             suite_source=suite,
