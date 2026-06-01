@@ -120,21 +120,23 @@ class VersionVector:
 
 
 @dataclass(frozen=True)
-class TrialEvent:
-    """One event in events.jsonl."""
+class Event:
+    """One event in an event stream.
+
+    Trial events live in ``events.jsonl`` (ADR 0003); run events live in
+    ``run_events.jsonl`` (ADR 0013). The two streams share one shape — the
+    stream an event belongs to is determined by the file/method it flows
+    through, not by its Python type. ``TrialEvent`` and ``RunEvent`` are
+    intent-revealing aliases for this single type.
+    """
 
     phase: str
     timestamp: str
     payload: dict = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class RunEvent:
-    """One event in a run's run_events.jsonl (ADR 0013)."""
-
-    phase: str
-    timestamp: str
-    payload: dict = field(default_factory=dict)
+TrialEvent = Event
+RunEvent = Event
 
 
 @dataclass(frozen=True)
