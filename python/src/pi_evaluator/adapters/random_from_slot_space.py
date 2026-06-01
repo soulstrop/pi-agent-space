@@ -14,9 +14,8 @@ sampler (or pure exploration below ADR 0006's bootstrap threshold).
 from __future__ import annotations
 
 import random
-from dataclasses import asdict
 
-from ..domain.identity import candidate_identity
+from ..domain.candidate_selection import unseen_packages
 from ..domain.slot_space import SlotSpace
 from ..domain.types import EvalSuiteRef, Package, Trial, VersionVector
 from ..ports.package_proposer_port import PackageProposerPort
@@ -44,26 +43,9 @@ class RandomFromSlotSpace(PackageProposerPort):
         self._rng = rng if rng is not None else random.Random()
 
     def propose(self, history: list[Trial]) -> Package | None:
-        seen = {
-            candidate_identity(
-                asdict(t.package),
-                asdict(t.eval_suite_ref),
-                asdict(t.version_vector),
-            )
-            for t in history
-        }
-        unseen = [
-            p
-            for p in self._slot_space.iter_packages()
-            if self._identity_for(p) not in seen
-        ]
+        unseen = unseen_packages(
+            self._slot_space, history, self._eval_suite_ref, self._version_vector
+        )
         if not unseen:
             return None
         return self._rng.choice(unseen)
-
-    def _identity_for(self, package: Package) -> str:
-        return candidate_identity(
-            asdict(package),
-            asdict(self._eval_suite_ref),
-            asdict(self._version_vector),
-        )
