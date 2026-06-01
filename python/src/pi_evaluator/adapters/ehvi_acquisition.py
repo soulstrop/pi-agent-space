@@ -102,6 +102,8 @@ class EHVIAcquisition:
             FastNondominatedPartitioning,
         )
 
+        from .gp_numerics import cholesky_safe, f64
+
         # Joint model + ref_point/frontier sliced to the fitted axes,
         # preserving the order of `axes`.
         joint = ModelListGP(*[models[ax] for ax in fitted_axes])
@@ -112,18 +114,11 @@ class EHVIAcquisition:
         # The objective transforms the GP posterior; the reference point and
         # frontier passed in raw units must be multiplied by the same signs
         # so partitioning and posterior live in the same (objective) space.
-        weights = torch.tensor(
-            [SURROGATE_AXIS_DIRECTIONS[ax] for ax in fitted_axes],
-            dtype=torch.float64,
-        )
+        weights = f64([SURROGATE_AXIS_DIRECTIONS[ax] for ax in fitted_axes])
         objective = WeightedMCMultiOutputObjective(weights=weights)
 
-        ref_obj = weights * torch.tensor(
-            [ref_point[i] for i in idx], dtype=torch.float64
-        )
-        Y_obj = weights * torch.tensor(
-            [[row[i] for i in idx] for row in pareto_Y], dtype=torch.float64
-        )
+        ref_obj = weights * f64([ref_point[i] for i in idx])
+        Y_obj = weights * f64([[row[i] for i in idx] for row in pareto_Y])
 
         # Any: FastNondominatedPartitioning is structurally compatible with
         # the NondominatedPartitioning annotation on qLogEHVI but is not a
@@ -141,6 +136,6 @@ class EHVIAcquisition:
         )
 
         # q=1: unsqueeze to [n_candidates, 1, feature_dim]
-        X_t = torch.tensor(X_candidates, dtype=torch.float64).unsqueeze(1)
+        X_t = f64(X_candidates).unsqueeze(1)
         with torch.no_grad():
-            return acq(X_t).tolist()
+            return cholesky_safe(lambda: acq(X_t).tolist(), what="ehvi")

@@ -17,6 +17,13 @@ from __future__ import annotations
 
 from ..domain.surrogate_data import SurrogateTrainingData
 from ..ports.surrogate_model_port import SurrogatePredictions
+from .gp_numerics import SurrogateNumericalError, cholesky_safe, f64
+
+__all__ = [
+    "HetGPSurrogate",
+    "SurrogateNotFittedError",
+    "SurrogateNumericalError",
+]
 
 N_BOOTSTRAP_DEFAULT: int = 10
 
@@ -60,7 +67,6 @@ class HetGPSurrogate:
         Replaces any previously fitted models in full — a refit with
         insufficient data clears the fitted state.
         """
-        import torch
         from botorch.fit import fit_gpytorch_mll
         from botorch.models import SingleTaskGP
         from gpytorch.mlls import ExactMarginalLogLikelihood
@@ -69,12 +75,12 @@ class HetGPSurrogate:
         for axis, (X, Y, Y_var) in training_data.items():
             if len(X) < self.n_bootstrap:
                 continue
-            train_X = torch.tensor(X, dtype=torch.float64)
-            train_Y = torch.tensor(Y, dtype=torch.float64).unsqueeze(-1)
-            train_Yvar = torch.tensor(Y_var, dtype=torch.float64).unsqueeze(-1)
+            train_X = f64(X)
+            train_Y = f64(Y).unsqueeze(-1)
+            train_Yvar = f64(Y_var).unsqueeze(-1)
             model = SingleTaskGP(train_X, train_Y, train_Yvar=train_Yvar)
             mll = ExactMarginalLogLikelihood(model.likelihood, model)
-            fit_gpytorch_mll(mll)
+            cholesky_safe(lambda: fit_gpytorch_mll(mll), what=f"fit[{axis}]")
             model.eval()
             new_models[axis] = model
 
@@ -94,11 +100,13 @@ class HetGPSurrogate:
             )
         import torch
 
-        X_t = torch.tensor(X_query, dtype=torch.float64)
+        X_t = f64(X_query)
         result: SurrogatePredictions = {}
         for axis, model in self._models.items():
             with torch.no_grad():
-                posterior = model.posterior(X_t)
+                posterior = cholesky_safe(
+                    lambda m=model: m.posterior(X_t), what=f"posterior[{axis}]"
+                )
                 means: list[float] = posterior.mean.squeeze(-1).tolist()
                 variances: list[float] = posterior.variance.squeeze(-1).tolist()
             result[axis] = (means, variances)
