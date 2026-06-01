@@ -1,9 +1,8 @@
-"""Phase 6.2: GP surrogate adapter using BoTorch FixedNoiseGP (ADR 0016).
+"""Phase 6.2: GP surrogate adapter using BoTorch SingleTaskGP (ADR 0016).
 
 5 independent GP heads — one per Pareto axis.  Each head uses
-BoTorch's FixedNoiseGP (observed per-input noise supplied from the
-capability profile's per-metric variance) with a Matern-5/2 ARD
-kernel and output standardization.
+BoTorch's SingleTaskGP with observed per-input noise (train_Yvar),
+a Matern-5/2 ARD kernel, and output standardization.
 
 Bootstrap discipline: an axis is skipped when it has fewer than
 n_bootstrap observations.  predict() only returns predictions for
@@ -31,20 +30,13 @@ class HetGPSurrogate:
 
     Parameters
     ----------
-    feature_dim:
-        Dimensionality of the feature vectors produced by FeatureEncoder.
     n_bootstrap:
         Minimum number of observations required to fit a GP head.
         Axes below this threshold are skipped; the proposer falls back
         to random when no axes meet the threshold.
     """
 
-    def __init__(
-        self,
-        feature_dim: int,
-        n_bootstrap: int = N_BOOTSTRAP_DEFAULT,
-    ) -> None:
-        self.feature_dim = feature_dim
+    def __init__(self, n_bootstrap: int = N_BOOTSTRAP_DEFAULT) -> None:
         self.n_bootstrap = n_bootstrap
         self._models: dict = {}
 
@@ -53,7 +45,7 @@ class HetGPSurrogate:
         return bool(self._models)
 
     def fit(self, training_data: SurrogateTrainingData) -> None:
-        """Fit one FixedNoiseGP per axis that has >= n_bootstrap observations.
+        """Fit one GP per axis that has >= n_bootstrap observations.
 
         Replaces any previously fitted models in full — a refit with
         insufficient data clears the fitted state.
@@ -70,11 +62,10 @@ class HetGPSurrogate:
             train_X = torch.tensor(X, dtype=torch.float64)
             train_Y = torch.tensor(Y, dtype=torch.float64).unsqueeze(-1)
             train_Yvar = torch.tensor(Y_var, dtype=torch.float64).unsqueeze(-1)
-            # SingleTaskGP with train_Yvar is the fixed-observed-noise path
-            # in BoTorch 0.17+ (FixedNoiseGP was removed; ADR 0016).
             model = SingleTaskGP(train_X, train_Y, train_Yvar=train_Yvar)
             mll = ExactMarginalLogLikelihood(model.likelihood, model)
             fit_gpytorch_mll(mll)
+            model.eval()
             new_models[axis] = model
 
         self._models = new_models
@@ -96,7 +87,6 @@ class HetGPSurrogate:
         X_t = torch.tensor(X_query, dtype=torch.float64)
         result: SurrogatePredictions = {}
         for axis, model in self._models.items():
-            model.eval()
             with torch.no_grad():
                 posterior = model.posterior(X_t)
                 means: list[float] = posterior.mean.squeeze(-1).tolist()

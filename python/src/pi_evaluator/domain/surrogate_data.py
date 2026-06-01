@@ -18,6 +18,8 @@ silently (the space may have evolved since the trial ran).
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from ..domain.capability_profile import capability_profile
 from ..domain.featurize import FeatureEncoder
 from ..domain.types import Trial
@@ -36,6 +38,9 @@ SurrogateTrainingData = dict[
     str, tuple[list[list[float]], list[float], list[float]]
 ]
 
+# {axis: (posterior_means, posterior_variances)}
+SurrogatePredictions = dict[str, tuple[list[float], list[float]]]
+
 MIN_NOISE_VAR: float = 1e-6
 SUBJECTIVE_NOISE_VAR: float = 0.01
 
@@ -51,7 +56,9 @@ def build_training_data(
     Returns a dict with all SURROGATE_AXES as keys; axes with no
     eligible observations map to three empty lists.
     """
-    result: SurrogateTrainingData = {axis: ([], [], []) for axis in SURROGATE_AXES}
+    X: dict[str, list[list[float]]] = defaultdict(list)
+    Y: dict[str, list[float]] = defaultdict(list)
+    Yvar: dict[str, list[float]] = defaultdict(list)
 
     for trial in trials:
         if trial.outcome in (None, "error_escalated"):
@@ -70,28 +77,22 @@ def build_training_data(
         dollars = profile.per_metric["cost_dollars"]
         quality = profile.per_metric["quality_score"]
 
-        _append(result, "mean_tokens", x, tokens.mean, tokens.variance)
-        _append(result, "mean_dollars", x, dollars.mean, dollars.variance)
-        _append(result, "scaling_slope", x, dollars.scaling_slope, MIN_NOISE_VAR)
-        _append(result, "mean_quality", x, quality.mean, quality.variance)
+        for axis, y, y_var in [
+            ("mean_tokens", tokens.mean, tokens.variance),
+            ("mean_dollars", dollars.mean, dollars.variance),
+            ("scaling_slope", dollars.scaling_slope, MIN_NOISE_VAR),
+            ("mean_quality", quality.mean, quality.variance),
+        ]:
+            X[axis].append(x)
+            Y[axis].append(y)
+            Yvar[axis].append(max(y_var, MIN_NOISE_VAR))
 
         if trial.subjective_score is not None:
-            _append(
-                result, "subjective",
-                x, trial.subjective_score.score, SUBJECTIVE_NOISE_VAR,
-            )
+            X["subjective"].append(x)
+            Y["subjective"].append(trial.subjective_score.score)
+            Yvar["subjective"].append(SUBJECTIVE_NOISE_VAR)
 
-    return result
-
-
-def _append(
-    result: SurrogateTrainingData,
-    axis: str,
-    x: list[float],
-    y: float,
-    y_var: float,
-) -> None:
-    xs, ys, yvs = result[axis]
-    xs.append(x)
-    ys.append(y)
-    yvs.append(max(y_var, MIN_NOISE_VAR))
+    return {
+        axis: (X[axis], Y[axis], Yvar[axis])
+        for axis in SURROGATE_AXES
+    }

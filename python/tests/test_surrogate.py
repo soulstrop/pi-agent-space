@@ -51,7 +51,7 @@ def _full_data(n: int, *, seed: int = 42) -> SurrogateTrainingData:
 
 
 def _surrogate(n_bootstrap: int = 3) -> HetGPSurrogate:
-    return HetGPSurrogate(feature_dim=_D, n_bootstrap=n_bootstrap)
+    return HetGPSurrogate(n_bootstrap=n_bootstrap)
 
 
 # ── Protocol conformance ──────────────────────────────────────────────────────
@@ -158,7 +158,7 @@ def test_posterior_mean_interpolates_between_training_points():
     X = [[float(i) / n] for i in range(n)]
     Y = [float(i) / n for i in range(n)]
     Y_var = [1e-6] * n
-    s = HetGPSurrogate(feature_dim=1, n_bootstrap=3)
+    s = HetGPSurrogate(n_bootstrap=3)
     training: SurrogateTrainingData = {
         "mean_tokens": (X, Y, Y_var),
         **{a: ([], [], []) for a in _ALL_AXES if a != "mean_tokens"},
