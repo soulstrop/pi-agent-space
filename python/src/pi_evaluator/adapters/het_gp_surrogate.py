@@ -44,6 +44,16 @@ class HetGPSurrogate:
     def is_fitted(self) -> bool:
         return bool(self._models)
 
+    @property
+    def models(self) -> dict:
+        """Read-only view of fitted GP heads keyed by axis name.
+
+        Empty until fit() runs with enough observations.  Consumers
+        (e.g. EHVIAcquisition) read this to build a joint model over
+        the fitted axes.
+        """
+        return self._models
+
     def fit(self, training_data: SurrogateTrainingData) -> None:
         """Fit one GP per axis that has >= n_bootstrap observations.
 

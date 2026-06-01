@@ -3,9 +3,10 @@
 Wraps the fitted HetGPSurrogate heads in a ModelListGP and scores
 candidate feature vectors via qLogExpectedHypervolumeImprovement.
 
-Bootstrap discipline: if the surrogate is not fitted (all axes below
-n_bootstrap) score_candidates() returns zeros; the SurrogateProposer
-(Phase 6.4) falls back to RandomFromSlotSpace in that case.
+Bootstrap discipline: score_candidates() returns zeros when fewer than
+2 requested axes are fitted (an unfitted surrogate has no fitted axes)
+or when no Pareto frontier exists yet; the SurrogateProposer (Phase 6.4)
+falls back to RandomFromSlotSpace in those cases.
 
 torch / botorch imports are deferred to score_candidates() so that
 importing this module does not pull in torch for callers that never
@@ -75,17 +76,14 @@ class EHVIAcquisition:
         -------
         list[float]
             qLogEHVI scores in log-space, length n_candidates.  All zeros
-            when the surrogate is not fitted or no requested axis is fitted.
+            when fewer than 2 requested axes are fitted (qLogEHVI needs
+            at least 2 objectives) or no Pareto frontier exists yet — in
+            both cases the proposer falls back to random.
         """
-        n = len(X_candidates)
-
-        if not self._surrogate.is_fitted:
-            return [0.0] * n
-
-        fitted_axes = [ax for ax in axes if ax in self._surrogate._models]
-        # FastNondominatedPartitioning requires at least 2 objectives.
-        if len(fitted_axes) < 2:
-            return [0.0] * n
+        models = self._surrogate.models
+        fitted_axes = [ax for ax in axes if ax in models]
+        if len(fitted_axes) < 2 or not pareto_Y:
+            return [0.0] * len(X_candidates)
 
         import torch
         from botorch.acquisition.multi_objective.logei import (
@@ -97,42 +95,29 @@ class EHVIAcquisition:
             FastNondominatedPartitioning,
         )
 
-        # Build joint model over fitted axes (preserving order from `axes`)
-        joint = ModelListGP(*[self._surrogate._models[ax] for ax in fitted_axes])
-
-        # Slice ref_point and pareto_Y to the fitted axes
-        fitted_idx = [axes.index(ax) for ax in fitted_axes]
-        ref_fitted = [ref_point[i] for i in fitted_idx]
-        ref_t = torch.tensor(ref_fitted, dtype=torch.float64)
-
-        if not pareto_Y:
-            # FastNondominatedPartitioning requires at least one Pareto point.
-            # With no frontier the proposer falls back to random; return zeros.
-            return [0.0] * n
-
+        # Joint model + ref_point/frontier sliced to the fitted axes,
+        # preserving the order of `axes`.
+        joint = ModelListGP(*[models[ax] for ax in fitted_axes])
+        idx = [axes.index(ax) for ax in fitted_axes]
+        ref = [ref_point[i] for i in idx]
         Y_t = torch.tensor(
-            [[row[i] for i in fitted_idx] for row in pareto_Y],
-            dtype=torch.float64,
+            [[row[i] for i in idx] for row in pareto_Y], dtype=torch.float64
         )
+
         # Any: FastNondominatedPartitioning is structurally compatible with
         # the NondominatedPartitioning annotation on qLogEHVI but is not a
         # formal subclass — use Any to avoid a false ty diagnostic.
-        partitioning: Any = FastNondominatedPartitioning(ref_point=ref_t, Y=Y_t)
-
+        partitioning: Any = FastNondominatedPartitioning(
+            ref_point=torch.tensor(ref, dtype=torch.float64), Y=Y_t
+        )
         sampler = SobolQMCNormalSampler(
-            sample_shape=torch.Size([self.n_mc_samples]),
-            seed=self.seed,
+            sample_shape=torch.Size([self.n_mc_samples]), seed=self.seed
         )
         acq = qLogExpectedHypervolumeImprovement(
-            model=joint,
-            ref_point=ref_t.tolist(),
-            partitioning=partitioning,
-            sampler=sampler,
+            model=joint, ref_point=ref, partitioning=partitioning, sampler=sampler
         )
 
         # q=1: unsqueeze to [n_candidates, 1, feature_dim]
         X_t = torch.tensor(X_candidates, dtype=torch.float64).unsqueeze(1)
         with torch.no_grad():
-            scores: list[float] = acq(X_t).tolist()
-
-        return scores
+            return acq(X_t).tolist()

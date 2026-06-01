@@ -211,8 +211,8 @@ def test_agrees_with_botorch_reference():
     our_scores = acq.score_candidates(X_cands, pareto_Y, ref_point, axes)
 
     # Reproduce manually
-    fitted_axes = [ax for ax in axes if ax in s._models]
-    joint = ModelListGP(*[s._models[ax] for ax in fitted_axes])
+    fitted_axes = [ax for ax in axes if ax in s.models]
+    joint = ModelListGP(*[s.models[ax] for ax in fitted_axes])
     ref_t = torch.tensor(ref_point, dtype=torch.float64)
     Y_t = torch.tensor(pareto_Y, dtype=torch.float64)
     partitioning = FastNondominatedPartitioning(ref_point=ref_t, Y=Y_t)
