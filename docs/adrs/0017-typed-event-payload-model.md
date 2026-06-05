@@ -1,8 +1,6 @@
 # Title: 0017 - Typed Event-Payload Model for the Trial/Run Event Streams
 
-**Status:** Proposed
-
-> Spike in progress; decision target **Phase 7** (the production-readiness phase that completes v1). Decision, Consequences, and Reconsider Triggers read `TBD` until the spike closes.
+**Status:** Accepted
 
 ## Context
 
@@ -55,15 +53,81 @@ Options 1–3 all touch how the persisted event streams are read and written. Ev
 
 ## Decision
 
-TBD — spike open; decision target Phase 7.
+**Option 1 — per-phase frozen dataclasses with a phase-dispatching parse.** This
+mirrors the pattern already shipped for the `RawTelemetry` half of `pi-agent-space-3kz`
+(`domain/telemetry.py`'s `AssistantMessage`), so both halves of that issue close
+with one idiom rather than two.
+
+Concretely:
+
+- **A frozen dataclass per emitted phase**, in a new `domain/event_payloads.py`:
+  `Configured(package_model)`, `EvalRecord(problem_id, difficulty, exit_code)`,
+  `MetricRecord(problem_id, metric_name, value, n_samples=1)`,
+  `CostCapWarning(scope, cap_usd, cumulative_cost_dollars, fraction)`,
+  `BoundaryViolation(reason, problem_id=None, timeout_seconds=None, cap_usd=None,
+  cumulative_cost_dollars=None)`, `Finalized(tokens_consumed, cost_dollars,
+  validation_pass_rate, quality_score, outcome)`. All phases the producer emits
+  are modelled — not just the two `capability_profile` reads today — so producer
+  and consumer bind to the *same* names and the coupling is closed on both ends.
+  `boundary_violation`'s two shapes (timeout vs. cost cap) collapse into one
+  dataclass discriminated by `reason`, with the shape-specific fields optional.
+
+- **A sealed union and a single dispatcher.** `EventPayload = Configured | EvalRecord
+  | … ` and `parse(event: Event) -> EventPayload | None`, matching on `event.phase`.
+  Consumers (`capability_profile`) call `parse` once at the top of the loop instead
+  of digging through `.get()` ladders; an unknown phase returns `None`.
+
+- **Producers construct the dataclass and serialize via `asdict`.** The on-disk
+  JSON is byte-for-byte unchanged (ADR 0003 layout preserved); only the in-memory
+  construction at the ~7 `trial_runner` emit sites becomes typed.
+
+- **`parse` reuses the ADR 0019 tolerant constructor** (`pi-agent-space-963`): each
+  per-phase parse is `_tolerant(cls, event.payload, where=phase)`, so unknown
+  fields are dropped-and-logged (forward-compat, ADR 0019 D4) and absent
+  additive fields fall back to dataclass defaults (backward-compat, D3). No second
+  parsing mechanism is introduced — the typed model and the versioning policy share
+  one seam.
+
+**Why not the alternatives.** Option 2 (`TypedDict`) leaves payloads as runtime
+dicts — the lone structural-only type in an otherwise all-frozen-dataclass domain —
+and barely improves the `.get() -> T | None` ergonomics that motivated the issue.
+Option 3 (Pydantic) adds a second heavyweight runtime dependency whose headline
+value, read-boundary validation, is now largely subsumed by the ADR 0019 tolerant
+reader. Option 4 (status quo) leaves the producer/consumer key coupling that
+`3kz` exists to close.
 
 ## Consequences
 
-TBD.
+- A new `domain/event_payloads.py` holds the per-phase dataclasses, the
+  `EventPayload` union, and `parse`. `Event.payload` *stays* `dict` on the
+  `Event` dataclass and on disk — the typing is a parse/build layer over it, not
+  a change to `Event`'s field type — so persistence and the wire format are
+  untouched.
+- The ~7 `trial_runner` emit sites build a dataclass and `asdict` it; the bare
+  dict literals go away, binding producer to the schema. `capability_profile`
+  reads `parse(event)` results, dropping its `.get()` + None-skip ladders.
+- Adding a payload field is now an *additive minor* (ADR 0019 D5): give the
+  dataclass field a default; old files read via the default (D3), older readers
+  drop the new key (D4). A rename/removal is a major bump.
+- Depends on the ADR 0019 tolerant seam (`pi-agent-space-963`) being in place so
+  `parse` has a `_tolerant` to call; the typed-payload work (tracked on `3kz`)
+  sequences after it.
+- The boundary-violation modelling choice (one dataclass, `reason`-discriminated,
+  optional shape fields) means a consumer must branch on `reason` to know which
+  optionals are populated — acceptable, since no structural consumer reads
+  boundary-violation payloads today.
 
 ## Reconsider Triggers
 
-TBD. (Candidate signals to fold in as the spike develops: a silent payload-key drift bug reaching a consumer; a second consumer of `metric_record`/`eval` payloads appearing; a decision to persist events in a non-JSONL backend; resolution of the SemVer/compatibility policy.)
+- A phase's payload grows a genuinely *required* second shape that optional fields
+  model awkwardly → consider splitting that phase's dataclass into a sub-union.
+- A second consumer needs runtime *validation* (not just typing) of payloads read
+  off disk → revisit Option 3 for that boundary specifically (the tolerant reader
+  drops unknowns but does not assert field *types*).
+- A decision to persist events in a non-JSONL backend → the `asdict`/`_tolerant`
+  serialization assumption is revisited (also an ADR 0019 trigger).
+- The per-phase `match` dispatch accumulates enough arms to be unwieldy → consider
+  a registry keyed by phase literal.
 
 ## Related
 

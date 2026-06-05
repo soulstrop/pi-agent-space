@@ -72,7 +72,7 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 - **Containerization & deployment baseline.** Establish the runtime container posture (the torch baseline ADR 0016 deferred). Spike S006. Distinct from the stronger workspace-isolation containers still deferred below.
 - **Observability suite.** Logging, tracing, and metrics as a coherent set, extending ADR 0015 (structured-logging depth). Spike S007.
 - **Security pass & threat model.** A `docs/threat-model.md` and the hardening it implies; relates to containerization and the open agent-isolation issue. Spike S008.
-- **Schema governance & versioning.** The umbrella over the typed event-payload model (ADR 0017 / spike S004) and the SemVer/compatibility policy (**ADR 0019**, Accepted): what schemas (package, eval-suite, event streams, persisted layouts) we govern, and what a version bump promises about reading data written by older versions. This is what makes "the committed surface" concrete.
+- **Schema governance & versioning.** The umbrella over the typed event-payload model (**ADR 0017**, Accepted) and the SemVer/compatibility policy (**ADR 0019**, Accepted): what schemas (package, eval-suite, event streams, persisted layouts) we govern, and what a version bump promises about reading data written by older versions. This is what makes "the committed surface" concrete.
 - **Surrogate numerical-robustness posture.** ADR 0018 — float64 mandate and Cholesky-jitter backstop are done; the batched multi-output GP / parallel-head decision (spike S009) lands here.
 
 ---
@@ -84,7 +84,6 @@ Spikes use a separate `S###` ID namespace so the planned-spike list and the ADR 
 | Spike | Question | Target phase | ADR (if opened) | Status |
 | --- | --- | --- | --- | --- |
 | S003 | **Boundary-violated trials visibility.** Should the surrogate see filtered boundary-violated trials as cliff signals? | Phase 6.2 | — | Open |
-| S004 | **Typed event-payload model.** What typed model replaces `Event.payload: dict`, and how does it serialize without breaking on-disk format compatibility? | Phase 7 | 0017 | Open |
 | S006 | **Containerization & deployment baseline.** What runtime container posture do we ship (the torch baseline ADR 0016 deferred)? | Phase 7 | — | Open |
 | S007 | **Observability suite.** What logging/tracing/metrics surface do we commit to, extending ADR 0015? | Phase 7 | — | Open |
 | S008 | **Security pass & threat model.** What is the v1 threat model, and what hardening does it imply (agent isolation, secret handling)? | Phase 7 | — | Open |
