@@ -426,7 +426,7 @@ def test_load_trials_warns_on_major_mismatch(tmp_path, caplog):
 
 
 def test_load_trials_tolerates_unknown_forward_compat_keys(tmp_path, caplog):
-    """load_trials drops unknown keys (newer-minor file) and still loads (ADR 0019 D4)."""
+    """load_trials drops unknown keys (newer-minor file) and still loads (D4)."""
     adapter = PerTrialDirectoryAdapter(tmp_path)
     adapter.save_trial(_trial())
     adapter.append_event("t-001", TrialEvent(phase="eval", timestamp="t1"))
@@ -447,7 +447,8 @@ def test_load_trials_tolerates_unknown_forward_compat_keys(tmp_path, caplog):
     assert loaded.package.model == "gemini-flash"  # known fields survive
     assert loaded.events[0].phase == "eval"
     ignored = [
-        r for r in caplog.records if getattr(r, "event", None) == "ignored_unknown_fields"
+        r for r in caplog.records
+        if getattr(r, "event", None) == "ignored_unknown_fields"
     ]
     assert {r.where for r in ignored} == {"config.json:package", "events.jsonl"}
 

@@ -19,14 +19,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import fields
-from typing import Any, TypeVar
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T")
 
-
-def tolerant(cls: type[T], data: dict[str, Any], *, where: str) -> T:
+def tolerant[T](cls: type[T], data: dict[str, Any], *, where: str) -> T:
     """Construct ``cls`` from ``data``, dropping (and logging) unknown keys.
 
     ``where`` names the source for the log (e.g. ``"versions.json"``). Missing

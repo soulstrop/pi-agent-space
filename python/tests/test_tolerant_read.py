@@ -27,7 +27,10 @@ def test_drops_unknown_keys():
 def test_logs_info_naming_unknown_fields(caplog):
     with caplog.at_level(logging.INFO, logger="pi_evaluator"):
         tolerant(_Sample, {"a": 1, "c": "future", "d": 9}, where="versions.json")
-    records = [r for r in caplog.records if getattr(r, "event", None) == "ignored_unknown_fields"]
+    records = [
+        r for r in caplog.records
+        if getattr(r, "event", None) == "ignored_unknown_fields"
+    ]
     assert len(records) == 1
     assert records[0].unknown_fields == ["c", "d"]
     assert records[0].where == "versions.json"
@@ -37,11 +40,12 @@ def test_no_log_when_no_unknown_keys(caplog):
     with caplog.at_level(logging.INFO, logger="pi_evaluator"):
         tolerant(_Sample, {"a": 1, "b": "x"}, where="t")
     assert not [
-        r for r in caplog.records if getattr(r, "event", None) == "ignored_unknown_fields"
+        r for r in caplog.records
+        if getattr(r, "event", None) == "ignored_unknown_fields"
     ]
 
 
 def test_absent_field_with_default_falls_back():
-    """Backward-compat (D3): an older file missing an additive field uses the default."""
+    """Backward-compat (D3): a file missing an additive field uses the default."""
     got = tolerant(_Sample, {"a": 1}, where="t")
     assert got == _Sample(a=1, b="default-b")

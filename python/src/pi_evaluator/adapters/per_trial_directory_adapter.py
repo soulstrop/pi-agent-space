@@ -206,7 +206,9 @@ class PerTrialDirectoryAdapter(PersistencePort):
                 Package, config["package"], where="config.json:package"
             )
             eval_suite_ref = tolerant(
-                EvalSuiteRef, config["eval_suite_ref"], where="config.json:eval_suite_ref"
+                EvalSuiteRef,
+                config["eval_suite_ref"],
+                where="config.json:eval_suite_ref",
             )
             version_vector = tolerant(VersionVector, versions, where="versions.json")
             events: list[TrialEvent] = []
