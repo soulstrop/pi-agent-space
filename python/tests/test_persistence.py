@@ -425,6 +425,33 @@ def test_load_trials_warns_on_major_mismatch(tmp_path, caplog):
     )
 
 
+def test_load_trials_tolerates_unknown_forward_compat_keys(tmp_path, caplog):
+    """load_trials drops unknown keys (newer-minor file) and still loads (ADR 0019 D4)."""
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    adapter.append_event("t-001", TrialEvent(phase="eval", timestamp="t1"))
+    # Simulate a file written by a newer minor: an additive key this reader
+    # has never heard of, in both a config sub-object and an event line.
+    config_path = tmp_path / "t-001" / "config.json"
+    config = json.loads(config_path.read_text())
+    config["package"]["future_field"] = "ignore-me"
+    config_path.write_text(json.dumps(config))
+    events_path = tmp_path / "t-001" / "events.jsonl"
+    events_path.write_text(
+        json.dumps({"phase": "eval", "timestamp": "t1", "future_top_level": 7}) + "\n"
+    )
+
+    with caplog.at_level(logging.INFO, logger="pi_evaluator"):
+        [loaded] = adapter.load_trials()
+
+    assert loaded.package.model == "gemini-flash"  # known fields survive
+    assert loaded.events[0].phase == "eval"
+    ignored = [
+        r for r in caplog.records if getattr(r, "event", None) == "ignored_unknown_fields"
+    ]
+    assert {r.where for r in ignored} == {"config.json:package", "events.jsonl"}
+
+
 def test_schema_version_matches_project_major_minor():
     """Drift guard: SCHEMA_VERSION tracks pyproject's MAJOR.MINOR (ADR 0019 D1/D2)."""
     pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"

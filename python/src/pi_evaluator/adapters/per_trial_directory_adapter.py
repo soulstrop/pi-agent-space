@@ -11,6 +11,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..domain.tolerant_read import tolerant
 from ..domain.types import (
     EvalSuiteRef,
     Metrics,
@@ -201,27 +202,39 @@ class PerTrialDirectoryAdapter(PersistencePort):
             self._check_schema_version(
                 config.get("schema_version"), where=trial_dir.name
             )
-            package = Package(**config["package"])
-            eval_suite_ref = EvalSuiteRef(**config["eval_suite_ref"])
-            version_vector = VersionVector(**versions)
+            package = tolerant(
+                Package, config["package"], where="config.json:package"
+            )
+            eval_suite_ref = tolerant(
+                EvalSuiteRef, config["eval_suite_ref"], where="config.json:eval_suite_ref"
+            )
+            version_vector = tolerant(VersionVector, versions, where="versions.json")
             events: list[TrialEvent] = []
             events_file = trial_dir / "events.jsonl"
             if events_file.exists():
                 for line in events_file.read_text().splitlines():
                     if not line.strip():
                         continue
-                    events.append(TrialEvent(**json.loads(line)))
+                    events.append(
+                        tolerant(TrialEvent, json.loads(line), where="events.jsonl")
+                    )
             final_metrics: Metrics | None = None
             subjective: SubjectiveScore | None = None
             outcome: Outcome | None = None
             final_file = trial_dir / "final.json"
             if final_file.exists():
                 final = json.loads(final_file.read_text())
-                final_metrics = Metrics(**final["metrics"])
+                final_metrics = tolerant(
+                    Metrics, final["metrics"], where="final.json:metrics"
+                )
                 outcome = final.get("outcome")
             subjective_file = trial_dir / "subjective.json"
             if subjective_file.exists():
-                subjective = SubjectiveScore(**json.loads(subjective_file.read_text()))
+                subjective = tolerant(
+                    SubjectiveScore,
+                    json.loads(subjective_file.read_text()),
+                    where="subjective.json",
+                )
             trials.append(
                 Trial(
                     trial_id=config["trial_id"],
