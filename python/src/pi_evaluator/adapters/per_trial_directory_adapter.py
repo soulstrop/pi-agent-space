@@ -6,6 +6,7 @@ ADR 0003, ADR 0013.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,9 +25,24 @@ from ..domain.types import (
 )
 from ..ports.persistence_port import PersistencePort
 
+logger = logging.getLogger(__name__)
+
+# On-disk schema version stamped on every trial/run directory (ADR 0019 D1).
+# Mirrors the release SemVer ``MAJOR.MINOR``; patch is omitted because a patch
+# release never changes the persisted schema (D2). Bump on any minor release
+# that changes the persisted layout. The drift guard in test_persistence keeps
+# this in lockstep with pyproject's project version.
+SCHEMA_VERSION = "0.1"
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _parse_major_minor(version: str) -> tuple[int, int]:
+    """Parse ``"MAJOR.MINOR"`` (patch tolerated) into an ``(int, int)`` pair."""
+    major, minor = (int(part) for part in version.split(".")[:2])
+    return major, minor
 
 
 class PerTrialDirectoryAdapter(PersistencePort):
@@ -58,6 +74,59 @@ class PerTrialDirectoryAdapter(PersistencePort):
             f.write(json.dumps(obj, sort_keys=True) + "\n")
 
     @staticmethod
+    def _check_schema_version(file_version: object, *, where: str) -> None:
+        """Compare an on-disk schema stamp against the reader (ADR 0019).
+
+        Never raises — the read proceeds in every case; this only emits the
+        appropriate log. Field-level tolerance (dropping unknown keys) is the
+        separate tolerant-reader seam (pi-agent-space-963).
+
+        - Missing/unparseable stamp: pre-stamp or malformed file; proceed
+          silently (D7 / legacy).
+        - Same major, file minor > reader minor: proceed, log info — the file
+          may carry additive fields this reader will ignore (D4).
+        - Same major, file minor <= reader minor: proceed silently (D3).
+        - Different major: cross-major compatibility is deferred (D6); proceed
+          best-effort and log a warning.
+        """
+        if not isinstance(file_version, str):
+            return
+        try:
+            file_major, file_minor = _parse_major_minor(file_version)
+        except (ValueError, IndexError):
+            logger.warning(
+                "unparseable schema_version; reading best-effort",
+                extra={
+                    "event": "schema_version_unparseable",
+                    "where": where,
+                    "file_schema_version": file_version,
+                },
+            )
+            return
+        reader_major, reader_minor = _parse_major_minor(SCHEMA_VERSION)
+        if file_major != reader_major:
+            logger.warning(
+                "schema major mismatch; reading best-effort (cross-major deferred)",
+                extra={
+                    "event": "schema_version_major_mismatch",
+                    "where": where,
+                    "file_schema_version": file_version,
+                    "reader_schema_version": SCHEMA_VERSION,
+                },
+            )
+            return
+        if file_minor > reader_minor:
+            logger.info(
+                "file written by newer minor schema; unknown fields are ignored",
+                extra={
+                    "event": "schema_version_newer_minor",
+                    "where": where,
+                    "file_schema_version": file_version,
+                    "reader_schema_version": SCHEMA_VERSION,
+                },
+            )
+
+    @staticmethod
     def _write_atomic(path: Path, payload: dict) -> None:
         """Write pretty-printed JSON via temp-then-rename (ADR 0003)."""
         tmp = path.parent / (path.name + ".tmp")
@@ -75,6 +144,7 @@ class PerTrialDirectoryAdapter(PersistencePort):
         d = self._trial_dir(trial.trial_id)
         d.mkdir(parents=True, exist_ok=True)
         config = {
+            "schema_version": SCHEMA_VERSION,
             "trial_id": trial.trial_id,
             "run_id": trial.run_id,
             "package": asdict(trial.package),
@@ -128,6 +198,9 @@ class PerTrialDirectoryAdapter(PersistencePort):
                 continue
             config = json.loads(config_file.read_text())
             versions = json.loads(versions_file.read_text())
+            self._check_schema_version(
+                config.get("schema_version"), where=trial_dir.name
+            )
             package = Package(**config["package"])
             eval_suite_ref = EvalSuiteRef(**config["eval_suite_ref"])
             version_vector = VersionVector(**versions)
@@ -174,7 +247,11 @@ class PerTrialDirectoryAdapter(PersistencePort):
     def create_run(self, run_id: str, config: RunConfig) -> None:
         d = self._run_dir(run_id)
         d.mkdir(parents=True, exist_ok=True)
-        run_config_payload = {"run_id": run_id, **asdict(config)}
+        run_config_payload = {
+            "schema_version": SCHEMA_VERSION,
+            "run_id": run_id,
+            **asdict(config),
+        }
         (d / "run_config.json").write_text(
             json.dumps(run_config_payload, indent=2, sort_keys=True)
         )

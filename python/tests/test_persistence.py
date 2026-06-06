@@ -1,6 +1,12 @@
 import json
+import logging
+import tomllib
+from pathlib import Path
 
-from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryAdapter
+from pi_evaluator.adapters.per_trial_directory_adapter import (
+    SCHEMA_VERSION,
+    PerTrialDirectoryAdapter,
+)
 from pi_evaluator.domain.types import (
     EvalSuiteRef,
     Metrics,
@@ -350,3 +356,78 @@ def test_load_trials_ignores_runs_subdirectory(tmp_path):
     loaded = adapter.load_trials()
     assert len(loaded) == 1
     assert loaded[0].trial_id == "t-001"
+
+
+# ------------------------------------------------------------------
+# Schema-version stamp (ADR 0019 D1/D2)
+# ------------------------------------------------------------------
+
+def test_save_trial_stamps_schema_version_in_config(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    config = json.loads((tmp_path / "t-001" / "config.json").read_text())
+    assert config["schema_version"] == SCHEMA_VERSION
+
+
+def test_create_run_stamps_schema_version_in_run_config(tmp_path):
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.create_run("run-001", _run_config())
+    cfg = json.loads((tmp_path / "runs" / "run-001" / "run_config.json").read_text())
+    assert cfg["schema_version"] == SCHEMA_VERSION
+
+
+def test_load_trials_accepts_legacy_trial_without_schema_version(tmp_path):
+    """A pre-stamp trial directory (no schema_version) still loads (D3/D7)."""
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    config_path = tmp_path / "t-001" / "config.json"
+    config = json.loads(config_path.read_text())
+    del config["schema_version"]
+    config_path.write_text(json.dumps(config))
+    [loaded] = adapter.load_trials()
+    assert loaded.trial_id == "t-001"
+
+
+def test_load_trials_logs_info_on_newer_minor_schema(tmp_path, caplog):
+    """A file written by a newer minor (same major) loads and logs info (D4)."""
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    config_path = tmp_path / "t-001" / "config.json"
+    config = json.loads(config_path.read_text())
+    major = int(SCHEMA_VERSION.split(".")[0])
+    minor = int(SCHEMA_VERSION.split(".")[1])
+    config["schema_version"] = f"{major}.{minor + 1}"
+    config_path.write_text(json.dumps(config))
+    with caplog.at_level(logging.INFO, logger="pi_evaluator"):
+        [loaded] = adapter.load_trials()
+    assert loaded.trial_id == "t-001"
+    assert any(
+        getattr(r, "event", None) == "schema_version_newer_minor"
+        for r in caplog.records
+    )
+
+
+def test_load_trials_warns_on_major_mismatch(tmp_path, caplog):
+    """A different-major file is read best-effort with a warning (D6 deferred)."""
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    config_path = tmp_path / "t-001" / "config.json"
+    config = json.loads(config_path.read_text())
+    major = int(SCHEMA_VERSION.split(".")[0])
+    config["schema_version"] = f"{major + 1}.0"
+    config_path.write_text(json.dumps(config))
+    with caplog.at_level(logging.WARNING, logger="pi_evaluator"):
+        [loaded] = adapter.load_trials()
+    assert loaded.trial_id == "t-001"
+    assert any(
+        getattr(r, "event", None) == "schema_version_major_mismatch"
+        for r in caplog.records
+    )
+
+
+def test_schema_version_matches_project_major_minor():
+    """Drift guard: SCHEMA_VERSION tracks pyproject's MAJOR.MINOR (ADR 0019 D1/D2)."""
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    project_version = tomllib.loads(pyproject.read_text())["project"]["version"]
+    major, minor = project_version.split(".")[:2]
+    assert SCHEMA_VERSION == f"{major}.{minor}"
