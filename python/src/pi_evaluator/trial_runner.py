@@ -6,6 +6,15 @@ import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from .domain.event_payloads import (
+    BoundaryViolation,
+    Configured,
+    CostCapWarning,
+    EvalRecord,
+    Finalized,
+    MetricRecord,
+    to_payload,
+)
 from .domain.types import (
     EvalSuiteRef,
     Metrics,
@@ -81,7 +90,7 @@ class TrialRunner:
             TrialEvent(
                 phase="configured",
                 timestamp=self._clock(),
-                payload={"package_model": package.model},
+                payload=to_payload(Configured(package_model=package.model)),
             ),
         )
 
@@ -99,11 +108,13 @@ class TrialRunner:
                     TrialEvent(
                         phase="boundary_violation",
                         timestamp=self._clock(),
-                        payload={
-                            "reason": "subprocess_timeout",
-                            "problem_id": problem.id,
-                            "timeout_seconds": exc.timeout,
-                        },
+                        payload=to_payload(
+                            BoundaryViolation(
+                                reason="subprocess_timeout",
+                                problem_id=problem.id,
+                                timeout_seconds=exc.timeout,
+                            )
+                        ),
                     ),
                 )
                 break
@@ -117,11 +128,13 @@ class TrialRunner:
                 TrialEvent(
                     phase="eval",
                     timestamp=self._clock(),
-                    payload={
-                        "problem_id": problem.id,
-                        "difficulty": problem.difficulty,
-                        "exit_code": telemetry.exit_code,
-                    },
+                    payload=to_payload(
+                        EvalRecord(
+                            problem_id=problem.id,
+                            difficulty=problem.difficulty,
+                            exit_code=telemetry.exit_code,
+                        )
+                    ),
                 ),
             )
             for metric_name, value in _metric_records(metrics):
@@ -130,12 +143,14 @@ class TrialRunner:
                     TrialEvent(
                         phase="metric_record",
                         timestamp=self._clock(),
-                        payload={
-                            "problem_id": problem.id,
-                            "metric_name": metric_name,
-                            "value": value,
-                            "n_samples": 1,
-                        },
+                        payload=to_payload(
+                            MetricRecord(
+                                problem_id=problem.id,
+                                metric_name=metric_name,
+                                value=value,
+                                n_samples=1,
+                            )
+                        ),
                     ),
                 )
 
@@ -149,12 +164,14 @@ class TrialRunner:
                         TrialEvent(
                             phase="cost_cap_warning",
                             timestamp=self._clock(),
-                            payload={
-                                "scope": "per_trial",
-                                "cap_usd": per_trial_cost_cap_usd,
-                                "cumulative_cost_dollars": cumulative_cost,
-                                "fraction": COST_CAP_WARNING_FRACTION,
-                            },
+                            payload=to_payload(
+                                CostCapWarning(
+                                    scope="per_trial",
+                                    cap_usd=per_trial_cost_cap_usd,
+                                    cumulative_cost_dollars=cumulative_cost,
+                                    fraction=COST_CAP_WARNING_FRACTION,
+                                )
+                            ),
                         ),
                     )
                     warning_emitted = True
@@ -164,11 +181,13 @@ class TrialRunner:
                         TrialEvent(
                             phase="boundary_violation",
                             timestamp=self._clock(),
-                            payload={
-                                "reason": "per_trial_cost_cap",
-                                "cap_usd": per_trial_cost_cap_usd,
-                                "cumulative_cost_dollars": cumulative_cost,
-                            },
+                            payload=to_payload(
+                                BoundaryViolation(
+                                    reason="per_trial_cost_cap",
+                                    cap_usd=per_trial_cost_cap_usd,
+                                    cumulative_cost_dollars=cumulative_cost,
+                                )
+                            ),
                         ),
                     )
                     break
@@ -190,13 +209,15 @@ class TrialRunner:
             TrialEvent(
                 phase="finalized",
                 timestamp=self._clock(),
-                payload={
-                    "tokens_consumed": final_metrics.tokens_consumed,
-                    "cost_dollars": final_metrics.cost_dollars,
-                    "validation_pass_rate": final_metrics.validation_pass_rate,
-                    "quality_score": final_metrics.quality_score,
-                    "outcome": outcome,
-                },
+                payload=to_payload(
+                    Finalized(
+                        tokens_consumed=final_metrics.tokens_consumed,
+                        cost_dollars=final_metrics.cost_dollars,
+                        validation_pass_rate=final_metrics.validation_pass_rate,
+                        quality_score=final_metrics.quality_score,
+                        outcome=outcome,
+                    )
+                ),
             ),
         )
 

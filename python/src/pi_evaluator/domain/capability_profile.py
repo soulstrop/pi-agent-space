@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .event_payloads import EvalRecord, MetricRecord, parse
 from .types import Trial
 
 
@@ -53,16 +54,12 @@ def capability_profile(trial: Trial) -> CapabilityProfile:
     difficulty_by_problem = _difficulty_index(trial)
     points_by_metric: dict[str, list[tuple[int, float]]] = {}
     for event in trial.events:
-        if event.phase != "metric_record":
+        record = parse(event)
+        if not isinstance(record, MetricRecord):
             continue
-        problem_id = event.payload.get("problem_id")
-        metric_name = event.payload.get("metric_name")
-        value = event.payload.get("value")
-        if problem_id is None or metric_name is None or value is None:
-            continue
-        difficulty = difficulty_by_problem.get(problem_id, 0)
-        points_by_metric.setdefault(metric_name, []).append(
-            (difficulty, float(value))
+        difficulty = difficulty_by_problem.get(record.problem_id, 0)
+        points_by_metric.setdefault(record.metric_name, []).append(
+            (difficulty, float(record.value))
         )
     return CapabilityProfile(
         per_metric={
@@ -74,12 +71,9 @@ def capability_profile(trial: Trial) -> CapabilityProfile:
 def _difficulty_index(trial: Trial) -> dict[str, int]:
     index: dict[str, int] = {}
     for event in trial.events:
-        if event.phase != "eval":
-            continue
-        problem_id = event.payload.get("problem_id")
-        difficulty = event.payload.get("difficulty")
-        if problem_id is not None and difficulty is not None:
-            index[problem_id] = int(difficulty)
+        record = parse(event)
+        if isinstance(record, EvalRecord):
+            index[record.problem_id] = int(record.difficulty)
     return index
 
 
