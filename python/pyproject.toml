@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "botorch>=0.17.2",
+    # torch is pulled in by botorch; it is listed explicitly so the CPU-index
+    # source pin below applies (uv only honors [tool.uv.sources] for direct
+    # dependencies). See the CPU-only baseline note further down.
+    "torch>=2.12.0",
 ]
 
 [dependency-groups]
@@ -14,6 +18,20 @@ dev = [
     "ruff>=0.11",
     "ty>=0.0.1a1",
 ]
+
+# CPU-only torch — the v1 baseline accepted in ADR 0016 and realized by the
+# container baseline (ADR 0021). Pinning torch to PyTorch's CPU wheel index
+# makes uv.lock resolve without the CUDA stack (drops ~37 nvidia-* packages /
+# multi-GB), so dev, CI, and the image all agree and `uv sync --frozen` stays
+# honest. GPU is not foreclosed: a future deep-exploration campaign re-locks
+# against a CUDA index without any code change (ADR 0016 Reconsider Trigger).
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
 
 [project.scripts]
 pi-eval = "pi_evaluator.cli.score:main"
