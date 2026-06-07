@@ -27,8 +27,8 @@ description = "Type-check Python sources with ty"
 run = "uv run ty check"
 
 [tasks.test]
-description = "Run Python tests"
-run = "uv run pytest"
+description = "Run Python tests with coverage (gated at 95%)"
+run = "uv run pytest --cov --cov-fail-under=95"
 
 [tasks.test-acceptance-fast]
 description = "Run minimal-spend real-Pi acceptance tests (1 trial, 0 retries, 1 problem; ADR 0010)"

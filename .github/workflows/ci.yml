@@ -62,5 +62,5 @@ jobs:
       - name: Typecheck (ty)
         run: uv run ty check
 
-      - name: Unit suite (pytest)
-        run: uv run pytest
+      - name: Unit suite (pytest + coverage gate)
+        run: mise run test

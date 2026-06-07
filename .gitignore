@@ -6,6 +6,9 @@ dist-newstyle/
 __pycache__/
 .pytest_cache/
 .venv/
+.coverage
+coverage.xml
+htmlcov/
 
 # Local provider API keys (the .env.example template IS tracked)
 .env
