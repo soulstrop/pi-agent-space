@@ -12,11 +12,14 @@ See ADR 0009 for the threat model and recipe rationale.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from pathlib import Path
 
 from ..ports.sandbox_port import SandboxedInvocation, SandboxPort
+
+logger = logging.getLogger(__name__)
 
 
 class NullSandbox(SandboxPort):
@@ -218,3 +221,69 @@ def bwrap_available(bwrap_binary: str = "bwrap") -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     return proc.returncode == 0
+
+
+def _pi_install_binds(pi_binary: str) -> tuple[Path, ...]:
+    """Resolve auxiliary read-only binds for the agent binary.
+
+    Pi is often installed outside the default system paths (e.g.
+    ``~/.local/share/mise/installs/pi/<ver>/...``). The dynamic linker
+    resolves ``/usr`` and ``/lib*`` (already bound by the recipe), but the
+    binary itself — and any siblings in its install directory — must be made
+    visible. We bind the **real** install directory (following symlinks, since
+    ``pi`` is frequently a shim) so the executable and its co-located resources
+    are reachable inside the sandbox. Returns empty when the binary can't be
+    located on PATH (e.g. an absolute path checked elsewhere, or a test stub).
+    """
+    resolved = shutil.which(pi_binary)
+    if resolved is None:
+        return ()
+    install_dir = Path(resolved).resolve().parent
+    return (install_dir,)
+
+
+def select_sandbox(
+    *,
+    pi_binary: str = "pi",
+    allow_unsandboxed: bool | None = None,
+    bwrap_binary: str = "bwrap",
+) -> SandboxPort:
+    """Select the isolation strategy for a *real* agent run (ADR 0009, j8x).
+
+    Hard-fail posture: agents must not run unisolated by accident.
+
+    * If ``bwrap`` can actually create a sandbox on this host, return a
+      ``BwrapSandbox`` (with the Pi install directory bound read-only).
+    * Otherwise **refuse** — raise ``RuntimeError`` — unless the operator has
+      explicitly opted out via ``PI_ALLOW_UNSANDBOXED`` (or ``allow_unsandboxed
+      =True``), in which case return ``NullSandbox`` after a loud warning.
+
+    ``allow_unsandboxed`` takes precedence over the environment when not
+    ``None`` (``False`` forces the refusal even if the env var is set).
+    """
+    if bwrap_available(bwrap_binary):
+        return BwrapSandbox(
+            bwrap_binary=bwrap_binary,
+            extra_ro_binds=_pi_install_binds(pi_binary),
+        )
+
+    if allow_unsandboxed is None:
+        allow_unsandboxed = bool(os.environ.get("PI_ALLOW_UNSANDBOXED"))
+
+    if allow_unsandboxed:
+        logger.warning(
+            "bwrap cannot sandbox on this host; running the agent UNISOLATED "
+            "because PI_ALLOW_UNSANDBOXED is set",
+            extra={
+                "event": "sandbox_unavailable_override",
+                "bwrap_binary": bwrap_binary,
+            },
+        )
+        return NullSandbox()
+
+    raise RuntimeError(
+        "refusing to run the agent unisolated: bwrap cannot create a sandbox "
+        "on this host (see ADR 0009 'Bwrap deployment requirements' for the "
+        "Family 1.A/1.B/1.C enablement options). Set PI_ALLOW_UNSANDBOXED=1 to "
+        "override and run without isolation."
+    )

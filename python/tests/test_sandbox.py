@@ -13,11 +13,13 @@ from pathlib import Path
 
 import pytest
 
+from pi_evaluator.adapters import sandbox as sandbox_mod
 from pi_evaluator.adapters.cli_subprocess_adapter import CliSubprocessAdapter
 from pi_evaluator.adapters.sandbox import (
     BwrapSandbox,
     NullSandbox,
     bwrap_available,
+    select_sandbox,
 )
 from pi_evaluator.domain.test_suite import GraduatedProblem, ValidationStep
 from pi_evaluator.domain.types import Package
@@ -328,3 +330,44 @@ def test_bwrap_integration_home_is_sandbox_tmpfs(tmp_path):
         ln == f"HOME={BwrapSandbox.DEFAULT_SANDBOX_HOME}"
         for ln in result.malformed_lines
     )
+
+
+class TestSelectSandbox:
+    """select_sandbox: hard-fail isolation posture for the real-pi path (j8x).
+
+    Policy (ADR 0009): BwrapSandbox when bwrap can sandbox; otherwise REFUSE
+    to run unisolated unless PI_ALLOW_UNSANDBOXED is set, in which case fall
+    back to NullSandbox with a loud warning.
+    """
+
+    def test_returns_bwrap_when_available(self, monkeypatch):
+        monkeypatch.setattr(sandbox_mod, "bwrap_available", lambda *a, **k: True)
+        assert isinstance(select_sandbox(pi_binary="pi"), BwrapSandbox)
+
+    def test_raises_when_unavailable_and_no_override(self, monkeypatch):
+        monkeypatch.setattr(sandbox_mod, "bwrap_available", lambda *a, **k: False)
+        monkeypatch.delenv("PI_ALLOW_UNSANDBOXED", raising=False)
+        with pytest.raises(RuntimeError, match="PI_ALLOW_UNSANDBOXED"):
+            select_sandbox(pi_binary="pi")
+
+    def test_env_override_falls_back_to_null_with_warning(self, monkeypatch, caplog):
+        monkeypatch.setattr(sandbox_mod, "bwrap_available", lambda *a, **k: False)
+        monkeypatch.setenv("PI_ALLOW_UNSANDBOXED", "1")
+        with caplog.at_level("WARNING", logger="pi_evaluator"):
+            sb = select_sandbox(pi_binary="pi")
+        assert isinstance(sb, NullSandbox)
+        assert any("UNISOLATED" in r.message or "unsandboxed" in r.message.lower()
+                   for r in caplog.records)
+
+    def test_explicit_allow_param_overrides_env(self, monkeypatch):
+        monkeypatch.setattr(sandbox_mod, "bwrap_available", lambda *a, **k: False)
+        monkeypatch.delenv("PI_ALLOW_UNSANDBOXED", raising=False)
+        assert isinstance(
+            select_sandbox(pi_binary="pi", allow_unsandboxed=True), NullSandbox
+        )
+
+    def test_explicit_allow_false_raises_despite_env(self, monkeypatch):
+        monkeypatch.setattr(sandbox_mod, "bwrap_available", lambda *a, **k: False)
+        monkeypatch.setenv("PI_ALLOW_UNSANDBOXED", "1")
+        with pytest.raises(RuntimeError):
+            select_sandbox(pi_binary="pi", allow_unsandboxed=False)
