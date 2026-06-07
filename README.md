@@ -56,3 +56,5 @@ The project is currently structured around a phased implementation plan.
 ## Contributing
 
 We welcome contributions! Setup, test workflows, TDD conventions, and pointers to the technical architecture are in the [contributors guide](docs/guides/contributors/README.md). Operators deploying or running trials should start from the [operators guide](docs/guides/operators/README.md).
+
+Real-Pi trials and the acceptance suite need at least one model-provider API key (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`); copy [`.env.example`](.env.example) to `.env` and see the [contributors guide § Getting Started](docs/guides/contributors/README.md#getting-started) for details. The unit suite and smoke harness need no keys.

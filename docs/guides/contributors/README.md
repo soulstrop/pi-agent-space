@@ -17,6 +17,23 @@ Setup, workflows, and conventions for contributing to pi-agent-space.
    mise run typecheck
    ```
    *(You can also run Python-specific tasks directly, like `mise run test-python`).*
+4. **Provider API keys (only for real-Pi trials / acceptance tests).** The
+   unit suite and smoke harness need no keys. Acceptance tests (`cd python
+   && mise run test-acceptance-full`) and real trials require the `pi`
+   binary on `PATH` plus at least one model-provider key. Copy
+   [`.env.example`](../../../.env.example) to `.env` and fill in a key:
+
+   | Variable | Provider model used by acceptance tests |
+   | --- | --- |
+   | `GEMINI_API_KEY` | `google/gemini-2.5-flash` |
+   | `ANTHROPIC_API_KEY` | `anthropic/claude-haiku-4-5` |
+   | `OPENAI_API_KEY` | `openai/gpt-4o-mini` |
+
+   The acceptance suite needs only **one** key — it picks the first provider
+   whose key is set (see `python/tests/acceptance_support.py`); with none set,
+   those tests skip. Keys are read straight from the environment (there is no
+   auto-loader), so export them yourself — e.g. `set -a; . ./.env; set +a`, or
+   via `direnv` / `mise`. `.env` is gitignored; never commit real keys.
 
 ## Running the full test suite
 

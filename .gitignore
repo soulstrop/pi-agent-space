@@ -7,6 +7,9 @@ __pycache__/
 .pytest_cache/
 .venv/
 
+# Local provider API keys (the .env.example template IS tracked)
+.env
+
 # LaTeX
 *.aux
 *.log
