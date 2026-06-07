@@ -9,7 +9,9 @@ Per ADR 0007 B1, the adapter retries on transient error signals
 (non-zero subprocess exit, or an assistant ``message_end`` with
 ``stopReason == "error"``) against the **same materialized workspace**.
 Retry budget defaults to 2 (3 total attempts: 1 initial + 2 retries),
-with exponential backoff at 30s / 60s. Persistent errors after the
+with exponential backoff at 30s / 60s, each wait scaled by uniform
+jitter (``RETRY_JITTER_RANGE``) to avoid thundering-herd
+synchronization across concurrent evaluators. Persistent errors after the
 budget exhausts return the last attempt's telemetry verbatim, leaving
 ``lifecycle.classify_outcome`` (ADR 0011) to escalate the trial.
 
@@ -26,6 +28,7 @@ with ``reason="subprocess_timeout"`` is tracked separately
 from __future__ import annotations
 
 import json
+import random
 import shlex
 import subprocess
 import time
@@ -47,6 +50,13 @@ Index ``i`` is the wait before retry ``i+1``. If the schedule is
 shorter than the retry budget, the last entry is reused for further
 retries."""
 
+RETRY_JITTER_RANGE: tuple[float, float] = (0.5, 1.5)
+"""Multiplicative jitter applied to each backoff wait.
+
+Each scheduled backoff is scaled by a factor drawn uniformly from this
+range before sleeping, so multiple evaluators that hit the same
+transient upstream error don't retry in lockstep (thundering herd)."""
+
 
 class CliSubprocessAdapter(AgentHarnessPort):
     """Spawn Pi as a subprocess; parse the JSON event stream off stdout."""
@@ -57,6 +67,7 @@ class CliSubprocessAdapter(AgentHarnessPort):
         retry_budget: int = 2,
         backoff_seconds: tuple[float, ...] = DEFAULT_RETRY_BACKOFF_SECONDS,
         sleep: Callable[[float], None] = time.sleep,
+        random_uniform: Callable[[float, float], float] = random.uniform,
         sandbox: SandboxPort | None = None,
         subprocess_timeout_seconds: float | None = None,
     ) -> None:
@@ -64,6 +75,7 @@ class CliSubprocessAdapter(AgentHarnessPort):
         self._retry_budget = retry_budget
         self._backoff_seconds = backoff_seconds
         self._sleep = sleep
+        self._random_uniform = random_uniform
         self._sandbox: SandboxPort = sandbox if sandbox is not None else NullSandbox()
         self._subprocess_timeout_seconds = subprocess_timeout_seconds
 
@@ -78,7 +90,8 @@ class CliSubprocessAdapter(AgentHarnessPort):
         for attempt in range(self._retry_budget + 1):
             if attempt > 0:
                 idx = min(attempt - 1, len(self._backoff_seconds) - 1)
-                self._sleep(self._backoff_seconds[idx])
+                jitter = self._random_uniform(*RETRY_JITTER_RANGE)
+                self._sleep(self._backoff_seconds[idx] * jitter)
             telemetry = self._run_once(package, problem, materialized)
             last_telemetry = telemetry
             if not is_model_error(telemetry):

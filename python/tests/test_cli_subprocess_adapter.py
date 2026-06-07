@@ -9,7 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from pi_evaluator.adapters.cli_subprocess_adapter import CliSubprocessAdapter
+from pi_evaluator.adapters.cli_subprocess_adapter import (
+    RETRY_JITTER_RANGE,
+    CliSubprocessAdapter,
+)
 from pi_evaluator.domain.test_suite import GraduatedProblem, ValidationStep
 from pi_evaluator.domain.types import Package, RawTelemetry
 from pi_evaluator.ports.agent_harness_port import AgentHarnessPort
@@ -366,7 +369,8 @@ def test_retries_use_same_materialized_workspace(tmp_path):
 
 
 def test_backoff_schedule_passed_to_sleep(tmp_path):
-    """Backoff values from the configured schedule pass through to sleep."""
+    """Backoff values from the configured schedule pass through to sleep
+    (jitter pinned to 1.0 so the schedule values are exact)."""
     src = _src_workspace(tmp_path)
     pi = _make_counting_mock_pi(
         tmp_path,
@@ -378,9 +382,61 @@ def test_backoff_schedule_passed_to_sleep(tmp_path):
         retry_budget=2,
         backoff_seconds=(0.1, 0.2),
         sleep=sleeps.append,
+        random_uniform=lambda _lo, _hi: 1.0,
     )
     adapter.run(_package(), _problem(src), workspace=str(src))
     assert sleeps == [0.1, 0.2]
+
+
+def test_backoff_applies_jitter(tmp_path):
+    """Each backoff is multiplied by a jitter factor drawn from
+    RETRY_JITTER_RANGE, so concurrent evaluators hitting the same
+    transient upstream error do not retry in lockstep (thundering herd)."""
+    src = _src_workspace(tmp_path)
+    pi = _make_counting_mock_pi(
+        tmp_path,
+        attempts=[{"exit_code": 1, "stdout_lines": []}] * 5,
+    )
+    seen_ranges: list[tuple[float, float]] = []
+
+    def fake_uniform(lo: float, hi: float) -> float:
+        seen_ranges.append((lo, hi))
+        return hi  # deterministic: top of the jitter range
+
+    sleeps: list[float] = []
+    adapter = CliSubprocessAdapter(
+        pi_binary=pi,
+        retry_budget=2,
+        backoff_seconds=(10.0, 20.0),
+        sleep=sleeps.append,
+        random_uniform=fake_uniform,
+    )
+    adapter.run(_package(), _problem(src), workspace=str(src))
+    assert seen_ranges == [RETRY_JITTER_RANGE, RETRY_JITTER_RANGE]
+    assert sleeps == [10.0 * RETRY_JITTER_RANGE[1], 20.0 * RETRY_JITTER_RANGE[1]]
+
+
+def test_default_jitter_stays_within_range(tmp_path):
+    """The default jitter source keeps each sleep within
+    [base*lo, base*hi] — verified over many draws."""
+    src = _src_workspace(tmp_path)
+    pi = _make_counting_mock_pi(
+        tmp_path,
+        attempts=[{"exit_code": 1, "stdout_lines": []}] * 3,
+    )
+    lo, hi = RETRY_JITTER_RANGE
+    for _ in range(50):
+        (tmp_path / "mock_pi_counter").unlink(missing_ok=True)
+        sleeps: list[float] = []
+        adapter = CliSubprocessAdapter(
+            pi_binary=pi,
+            retry_budget=1,
+            backoff_seconds=(10.0,),
+            sleep=sleeps.append,
+        )
+        adapter.run(_package(), _problem(src), workspace=str(src))
+        assert len(sleeps) == 1
+        assert 10.0 * lo <= sleeps[0] <= 10.0 * hi
 
 
 # --- ADR 0007 A2: subprocess timeout ---
