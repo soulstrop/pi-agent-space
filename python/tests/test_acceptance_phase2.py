@@ -38,6 +38,7 @@ from pi_evaluator.adapters.graduated_problem_set_adapter import (
     GraduatedProblemSetAdapter,
 )
 from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryAdapter
+from pi_evaluator.adapters.sandbox import select_sandbox
 from pi_evaluator.adapters.synthetic_suite_scorer import SyntheticSuiteScorer
 from pi_evaluator.domain.types import EvalSuiteRef, Package, VersionVector
 from pi_evaluator.trial_runner import TrialRunner
@@ -60,7 +61,11 @@ def _run(tmp_path: Path, *, retry_budget: int) -> None:
 
     persistence = PerTrialDirectoryAdapter(tmp_path)
     runner = TrialRunner(
-        harness=CliSubprocessAdapter(pi_binary="pi", retry_budget=retry_budget),
+        harness=CliSubprocessAdapter(
+            pi_binary="pi",
+            retry_budget=retry_budget,
+            sandbox=select_sandbox(pi_binary="pi"),
+        ),
         scorer=SyntheticSuiteScorer(),
         persistence=persistence,
         suite_source=GraduatedProblemSetAdapter(

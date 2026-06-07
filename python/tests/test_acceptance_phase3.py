@@ -41,6 +41,7 @@ from pi_evaluator.adapters.graduated_problem_set_adapter import (
 )
 from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryAdapter
 from pi_evaluator.adapters.random_from_slot_space import RandomFromSlotSpace
+from pi_evaluator.adapters.sandbox import select_sandbox
 from pi_evaluator.adapters.synthetic_suite_scorer import SyntheticSuiteScorer
 from pi_evaluator.domain.slot_space import NamedValue, SlotSpace
 from pi_evaluator.domain.types import EvalSuiteRef, VersionVector
@@ -107,7 +108,11 @@ def _run(
     trials_dir = tmp_path / "trials"
     persistence = PerTrialDirectoryAdapter(trials_dir)
     runner = TrialRunner(
-        harness=CliSubprocessAdapter(pi_binary="pi", retry_budget=retry_budget),
+        harness=CliSubprocessAdapter(
+            pi_binary="pi",
+            retry_budget=retry_budget,
+            sandbox=select_sandbox(pi_binary="pi"),
+        ),
         scorer=SyntheticSuiteScorer(),
         persistence=persistence,
         suite_source=GraduatedProblemSetAdapter(

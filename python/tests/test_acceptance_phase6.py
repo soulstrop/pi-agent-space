@@ -51,6 +51,7 @@ from pi_evaluator.adapters.graduated_problem_set_adapter import (
 from pi_evaluator.adapters.het_gp_surrogate import HetGPSurrogate
 from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryAdapter
 from pi_evaluator.adapters.random_from_slot_space import RandomFromSlotSpace
+from pi_evaluator.adapters.sandbox import select_sandbox
 from pi_evaluator.adapters.stub_agent_harness_adapter import StubAgentHarnessAdapter
 from pi_evaluator.adapters.stub_scorer import StubScorer
 from pi_evaluator.adapters.surrogate_proposer import SurrogateProposer
@@ -156,7 +157,11 @@ def _run(tmp_path: Path, *, trial_budget: int, retry_budget: int) -> None:
 
     persistence = PerTrialDirectoryAdapter(trials_dir)
     runner = TrialRunner(
-        harness=CliSubprocessAdapter(pi_binary="pi", retry_budget=retry_budget),
+        harness=CliSubprocessAdapter(
+            pi_binary="pi",
+            retry_budget=retry_budget,
+            sandbox=select_sandbox(pi_binary="pi"),
+        ),
         scorer=SyntheticSuiteScorer(),
         persistence=persistence,
         suite_source=GraduatedProblemSetAdapter(

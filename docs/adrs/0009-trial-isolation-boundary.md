@@ -206,6 +206,16 @@ The mechanism is sized to the trust model and ratchets up *only* as that trust m
 
 Egress filtering and audited resource caps are **cross-cutting** concerns that attach at whichever rung is in force; they are not themselves rungs. The operator's usual "microVM by default" posture corresponds to rung 4 and is the correct default when the guest *code* is unvetted — a condition v1 does not meet, which is why v1 sits at rung 1.
 
+### Wiring and failure posture (j8x)
+
+The `CliSubprocessAdapter` *default* stays `NullSandbox` — unit tests, the smoke harness, and the macOS dev loop are unaffected, and isolation remains a deliberate choice at the wiring point. The **real-`pi` execution path** (the acceptance suite, the only path that spawns the live agent today) opts in through a `select_sandbox(pi_binary=…)` helper that encodes a **hard-fail posture**:
+
+1. If `bwrap` can actually create a sandbox on this host (`bwrap_available()` — a functional probe, not just a PATH check), use `BwrapSandbox`, binding the resolved Pi install directory read-only so the agent binary is reachable.
+2. Otherwise **refuse**: raise rather than silently run the agent unisolated.
+3. The operator can override with `PI_ALLOW_UNSANDBOXED=1`, which falls back to `NullSandbox` after a loud `WARNING` log (`event: sandbox_unavailable_override`).
+
+The refusal sits *after* the `require_pi_and_model()` gate, so a host without Pi or an API key skips the acceptance test cleanly rather than erroring on the sandbox. This makes "real trials run unisolated" an explicit, logged operator decision — never an accident — which is the behavior `pi-agent-space-j8x` demanded.
+
 ## Reconsider Triggers
 
 Move from `BwrapSandbox` to a different family (or stack them per Option 4) when any of these hold:
@@ -231,5 +241,5 @@ Move from `BwrapSandbox` to a different family (or stack them per Option 4) when
 ## Related
 
 * Supersedes ADR 0004's *Reconsider Triggers* item "Concurrent trials / network isolation per trial."
-* Closes beads `pi-agent-space-j8x` once `BwrapSandbox` is wired into the acceptance-test path.
+* Closes beads `pi-agent-space-j8x`: `select_sandbox` wires `BwrapSandbox` (hard-fail posture) into the acceptance-test path.
 * `docs/design-notes.md` carries the recipe-detail rationale (HOME tmpfs, no-unshare-user choice, env allowlist composition).
