@@ -1,0 +1,66 @@
+name: CI
+
+# Gate every PR and every push to main on the Python lint + typecheck + unit
+# suite (pi-agent-space-51d). The Python package is the canonical source of
+# truth (ADR 0021); the same lockfiles the container image uses drive CI here,
+# so the gate is reproducible without building the 1.5 GB image each run.
+#
+# Haskell is intentionally not gated yet: its toolchain is not fully repo-pinned
+# (only `hx`; GHC/cabal come from outside) and it has an open P0
+# (pi-agent-space-8wr). A Haskell job lands when that is resolved.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege: the gate only reads the tree.
+permissions:
+  contents: read
+
+# Supersede in-flight runs on the same ref (e.g. a force-push to a PR branch).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python gate (lint · typecheck · test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    env:
+      # uv resolves against the mise-provided interpreter rather than fetching
+      # its own — one source of truth for the toolchain (matches the image).
+      UV_PYTHON_PREFERENCE: only-system
+      UV_PYTHON: python
+      # Non-interactive: don't prompt to trust configs or confirm installs.
+      MISE_YES: "1"
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      # Set up mise but do NOT auto-install: the merged repo config includes
+      # root doc/agent tools (pandoc, weasyprint, claude, …) we don't want in
+      # CI. We install only the named Python toolchain next.
+      - uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925 # v4.1.0
+        with:
+          install: false
+          cache: true
+
+      - name: Install pinned toolchain (python, uv — from mise.lock)
+        run: |
+          mise trust --all
+          mise install python uv
+
+      - name: Sync dependencies (CPU torch, frozen)
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Typecheck (ty)
+        run: uv run ty check
+
+      - name: Unit suite (pytest)
+        run: uv run pytest
