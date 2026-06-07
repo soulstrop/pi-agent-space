@@ -449,6 +449,23 @@ def test_load_trials_warns_on_major_mismatch(tmp_path, caplog):
     )
 
 
+def test_load_trials_skips_trial_with_malformed_json(tmp_path, caplog):
+    """A trial directory whose JSON is corrupt is skipped with a warning;
+    other trials still load (one bad file must not abort the load). ibp."""
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial("t-ok"))
+    adapter.save_trial(_trial("t-bad"))
+    (tmp_path / "t-bad" / "config.json").write_text("{ not valid json")
+    with caplog.at_level(logging.WARNING, logger="pi_evaluator"):
+        loaded = adapter.load_trials()
+    assert [t.trial_id for t in loaded] == ["t-ok"]
+    assert any(
+        getattr(r, "event", None) == "trial_json_malformed"
+        and getattr(r, "trial_dir", None) == "t-bad"
+        for r in caplog.records
+    )
+
+
 def test_load_trials_tolerates_unknown_forward_compat_keys(tmp_path, caplog):
     """load_trials drops unknown keys (newer-minor file) and still loads (D4)."""
     adapter = PerTrialDirectoryAdapter(tmp_path)

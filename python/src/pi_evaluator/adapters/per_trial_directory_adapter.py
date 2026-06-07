@@ -59,7 +59,8 @@ class PerTrialDirectoryAdapter(PersistencePort):
 
     ``load_trials`` scans ``<base>/`` directly; the ``runs/`` subdirectory
     is skipped automatically because it contains no ``config.json`` /
-    ``versions.json`` files.
+    ``versions.json`` files. A trial directory whose JSON is unparseable is
+    skipped with a logged warning so one corrupt trial cannot abort the load.
     """
 
     def __init__(self, base_dir: str | Path) -> None:
@@ -204,60 +205,75 @@ class PerTrialDirectoryAdapter(PersistencePort):
             versions_file = trial_dir / "versions.json"
             if not (config_file.exists() and versions_file.exists()):
                 continue
-            config = json.loads(config_file.read_text())
-            versions = json.loads(versions_file.read_text())
-            self._check_schema_version(
-                config.get("schema_version"), where=trial_dir.name
-            )
-            package = tolerant(
-                Package, config["package"], where="config.json:package"
-            )
-            eval_suite_ref = tolerant(
-                EvalSuiteRef,
-                config["eval_suite_ref"],
-                where="config.json:eval_suite_ref",
-            )
-            version_vector = tolerant(VersionVector, versions, where="versions.json")
-            events: list[TrialEvent] = []
-            events_file = trial_dir / "events.jsonl"
-            if events_file.exists():
-                for line in events_file.read_text().splitlines():
-                    if not line.strip():
-                        continue
-                    events.append(
-                        tolerant(TrialEvent, json.loads(line), where="events.jsonl")
-                    )
-            final_metrics: Metrics | None = None
-            subjective: SubjectiveScore | None = None
-            outcome: Outcome | None = None
-            final_file = trial_dir / "final.json"
-            if final_file.exists():
-                final = json.loads(final_file.read_text())
-                final_metrics = tolerant(
-                    Metrics, final["metrics"], where="final.json:metrics"
+            try:
+                trials.append(self._load_one_trial(trial_dir))
+            except json.JSONDecodeError as exc:
+                # One corrupt trial directory must not abort an entire history
+                # load (e.g. an overnight run's accumulated trials). Skip it
+                # with a warning; the rest still load.
+                logger.warning(
+                    "skipping trial with malformed JSON",
+                    extra={
+                        "event": "trial_json_malformed",
+                        "trial_dir": trial_dir.name,
+                        "error": str(exc),
+                    },
                 )
-                outcome = final.get("outcome")
-            subjective_file = trial_dir / "subjective.json"
-            if subjective_file.exists():
-                subjective = tolerant(
-                    SubjectiveScore,
-                    json.loads(subjective_file.read_text()),
-                    where="subjective.json",
-                )
-            trials.append(
-                Trial(
-                    trial_id=config["trial_id"],
-                    run_id=config.get("run_id"),
-                    package=package,
-                    eval_suite_ref=eval_suite_ref,
-                    version_vector=version_vector,
-                    events=events,
-                    final_metrics=final_metrics,
-                    subjective_score=subjective,
-                    outcome=outcome,
-                )
-            )
         return trials
+
+    def _load_one_trial(self, trial_dir: Path) -> Trial:
+        """Reconstruct one ``Trial`` from its directory.
+
+        Raises ``json.JSONDecodeError`` if any of the trial's JSON files is
+        unparseable; ``load_trials`` catches this to skip the directory.
+        """
+        config = json.loads((trial_dir / "config.json").read_text())
+        versions = json.loads((trial_dir / "versions.json").read_text())
+        self._check_schema_version(config.get("schema_version"), where=trial_dir.name)
+        package = tolerant(Package, config["package"], where="config.json:package")
+        eval_suite_ref = tolerant(
+            EvalSuiteRef,
+            config["eval_suite_ref"],
+            where="config.json:eval_suite_ref",
+        )
+        version_vector = tolerant(VersionVector, versions, where="versions.json")
+        events: list[TrialEvent] = []
+        events_file = trial_dir / "events.jsonl"
+        if events_file.exists():
+            for line in events_file.read_text().splitlines():
+                if not line.strip():
+                    continue
+                events.append(
+                    tolerant(TrialEvent, json.loads(line), where="events.jsonl")
+                )
+        final_metrics: Metrics | None = None
+        subjective: SubjectiveScore | None = None
+        outcome: Outcome | None = None
+        final_file = trial_dir / "final.json"
+        if final_file.exists():
+            final = json.loads(final_file.read_text())
+            final_metrics = tolerant(
+                Metrics, final["metrics"], where="final.json:metrics"
+            )
+            outcome = final.get("outcome")
+        subjective_file = trial_dir / "subjective.json"
+        if subjective_file.exists():
+            subjective = tolerant(
+                SubjectiveScore,
+                json.loads(subjective_file.read_text()),
+                where="subjective.json",
+            )
+        return Trial(
+            trial_id=config["trial_id"],
+            run_id=config.get("run_id"),
+            package=package,
+            eval_suite_ref=eval_suite_ref,
+            version_vector=version_vector,
+            events=events,
+            final_metrics=final_metrics,
+            subjective_score=subjective,
+            outcome=outcome,
+        )
 
     # ------------------------------------------------------------------
     # Run methods (ADR 0013)

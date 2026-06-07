@@ -125,6 +125,26 @@ def test_problem_ids_filter_skips_malformed_excluded_problem(tmp_path):
     assert [p.id for p in adapter.load()] == ["001_alpha"]
 
 
+def test_load_skips_problem_with_malformed_json(tmp_path, caplog):
+    """A problem.json that is not valid JSON is skipped with a warning rather
+    than aborting the whole load (pi-agent-space-ibp). Distinct from a
+    schema-incomplete problem, which still raises (see below)."""
+    import logging
+
+    _write_problem(tmp_path, "001_alpha", "001_alpha")
+    (tmp_path / "002_corrupt").mkdir()
+    (tmp_path / "002_corrupt" / "problem.json").write_text("{not valid json")
+    adapter = GraduatedProblemSetAdapter(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="pi_evaluator"):
+        problems = adapter.load()
+    assert [p.id for p in problems] == ["001_alpha"]
+    assert any(
+        getattr(r, "event", None) == "problem_json_malformed"
+        and getattr(r, "problem_dir", None) == "002_corrupt"
+        for r in caplog.records
+    )
+
+
 def test_no_filter_still_validates_every_problem(tmp_path):
     """Without an allowlist, schema validation still runs on every problem —
     the pre-filter optimization must not weaken the default safety net."""

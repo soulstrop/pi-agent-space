@@ -24,16 +24,23 @@ Expected layout::
 - A bare ``str`` is rejected with ``TypeError`` (Python footgun: ``str``
   is itself ``Iterable[str]`` of characters, so passing one would
   silently empty the load). Wrap single ids in a list.
+
+A ``problem.json`` that is not valid JSON is skipped with a logged warning
+rather than aborting the load; a parseable-but-schema-incomplete problem
+still raises (the safety net), unless excluded by the allowlist.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterable
 from pathlib import Path
 
 from ..domain.test_suite import GraduatedProblem
 from ..ports.eval_suite_source_port import EvalSuiteSourcePort
+
+logger = logging.getLogger(__name__)
 
 
 class GraduatedProblemSetAdapter(EvalSuiteSourcePort):
@@ -62,7 +69,18 @@ class GraduatedProblemSetAdapter(EvalSuiteSourcePort):
             problem_file = problem_dir / "problem.json"
             if not problem_file.exists():
                 continue
-            data = json.loads(problem_file.read_text())
+            try:
+                data = json.loads(problem_file.read_text())
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "skipping problem with malformed JSON",
+                    extra={
+                        "event": "problem_json_malformed",
+                        "problem_dir": problem_dir.name,
+                        "error": str(exc),
+                    },
+                )
+                continue
             if self._allowlist is not None and data.get("id") not in self._allowlist:
                 continue
             data["workspace_dir"] = str(problem_dir.resolve())
