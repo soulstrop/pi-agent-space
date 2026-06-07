@@ -65,6 +65,19 @@ run = "mise run test"
 dir = "python"
 run = "mise run test"
 
+[tasks.container-build]
+description = "Build the Python-only CI/dev image (ADR 0021). ENGINE=docker to override."
+# TMPDIR points at disk: rootless podman commits layers via $TMPDIR, and a
+# small /run/user tmpfs overflows on the torch layer.
+env = { ENGINE = "podman", TMPDIR = "/var/tmp" }
+run = "$ENGINE build -t pi-agent-space:ci -f Containerfile ."
+
+[tasks.container-test]
+description = "Run the CI loop (lint + typecheck + unit suite) inside the image (ADR 0021)."
+env = { ENGINE = "podman", TMPDIR = "/var/tmp" }
+depends = ["container-build"]
+run = "$ENGINE run --rm pi-agent-space:ci"
+
 [tasks.build]
 description = "Build all subprojects"
 depends = ["build-haskell", "build-python"]

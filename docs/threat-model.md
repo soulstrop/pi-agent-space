@@ -98,14 +98,17 @@ the v1 disposition. "✅ closed" = mitigated in v1; "🔒 v1" = committed v1 wor
 
 | Threat | Category | Mitigation | Disposition |
 | --- | --- | --- | --- |
-| Unpinned `mise` tool versions (`latest`) drift or are swapped | Tampering | Pin tools to immutable versions/digests | ⏭ delegated — `1hj` (S006) |
+| Unpinned `mise` tool versions (`latest`) drift or are swapped | Tampering | Pin tools to immutable versions/digests | ◐ partial — the CI toolchain (python/uv/ruff/ty) is pinned with per-platform checksums in `python/mise.lock` (ADR 0021 D3); root doc-tools remain `1hj` |
+| Torch resolves to an unintended (CUDA) build, bloating the surface | Tampering | Pin torch to the CPU wheel index in `uv.lock` (ADR 0016 baseline) | ✅ closed (ADR 0021 D2) |
 | The `pi` binary is unpinned | Tampering | Pin `pi` in a declarative manifest | ⏭ delegated — `evf` (S006) |
 | A dependency ships a known advisory | Elevation / tampering | `pip-audit` advisory scan in CI | ⏭ delegated — `51d` / Principle 5 (CI) |
 | A newly added dependency violates the license posture | Compliance | `LICENSES.md` + CI allowlist gate | ⏭ delegated — `xu4` / Principle 8 (S006/CI) |
 
 Supply-chain mitigations are **enumerated here but owned elsewhere** (ADR 0020
-D3): the Containerization & deployment baseline (S006) and CI workstreams. They
-are listed so the threat model is complete and nothing is silently dropped.
+D3): the Containerization & deployment baseline (now **ADR 0021**, which pinned
+the CI toolchain and the CPU-torch lock) and CI workstreams. The remainder
+(`evf`/`xu4`/`51d`, root doc-tools in `1hj`) is listed so the threat model is
+complete and nothing is silently dropped.
 
 ## v1 commitments (this threat model's "must-close" set)
 

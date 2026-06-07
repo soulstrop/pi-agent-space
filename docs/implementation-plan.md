@@ -69,7 +69,7 @@ This document defines the high-level roadmap for the `pi-agent-space` Python pro
 
 **Workstreams (scope per stream settled at its spike/ADR):**
 
-- **Containerization & deployment baseline.** Establish the runtime container posture (the torch baseline ADR 0016 deferred). Spike S006. Distinct from the stronger workspace-isolation containers still deferred below.
+- **Containerization & deployment baseline.** The runtime container posture (the torch baseline ADR 0016 deferred) is settled in **ADR 0021** (Accepted): a Python-only CI/dev base image (Podman-first, OCI-standard) provisioned from `mise.lock` (toolchain) + `uv.lock` (deps, CPU-only torch). Real-`pi` trials stay on the host — per-trial workspace-isolation containers remain deferred below. Spike S006 closed.
 - **Observability suite.** Logging, tracing, and metrics as a coherent set, extending ADR 0015 (structured-logging depth). Spike S007.
 - **Security pass & threat model.** [`docs/threat-model.md`](threat-model.md) and the v1 hardening scope (**ADR 0020**, Accepted): agent isolation (ADR 0009, done), persisted-secret redaction (v1), OS-level resource caps (v1), with egress/rotation/log-allowlist/validation-sandbox deferred to the enterprise scenario. Supply-chain hardening is enumerated here but owned by the containerization/CI workstreams. Spike S008 closed.
 - **Schema governance & versioning.** The umbrella over the typed event-payload model (**ADR 0017**, Accepted) and the SemVer/compatibility policy (**ADR 0019**, Accepted): what schemas (package, eval-suite, event streams, persisted layouts) we govern, and what a version bump promises about reading data written by older versions. This is what makes "the committed surface" concrete.
@@ -84,7 +84,6 @@ Spikes use a separate `S###` ID namespace so the planned-spike list and the ADR 
 | Spike | Question | Target phase | ADR (if opened) | Status |
 | --- | --- | --- | --- | --- |
 | S003 | **Boundary-violated trials visibility.** Should the surrogate see filtered boundary-violated trials as cliff signals? | Phase 6.2 | — | Open |
-| S006 | **Containerization & deployment baseline.** What runtime container posture do we ship (the torch baseline ADR 0016 deferred)? | Phase 7 | — | Open |
 | S007 | **Observability suite.** What logging/tracing/metrics surface do we commit to, extending ADR 0015? | Phase 7 | — | Open |
 | S009 | **Batched multi-output GP.** Fit the 4 shared-`train_X` objective heads as one multi-output model (parallel LML, simpler EHVI seam)? Revisits ADR 0016. | Phase 7 | 0018 | Open |
 

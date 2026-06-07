@@ -1,0 +1,29 @@
+# Keep the build context small: the Python-only CI image (Containerfile, ADR
+# 0021) copies only python/ sources + lockfiles. Everything below is either
+# irrelevant to that image or reconstructed inside it.
+
+# VCS / tooling state
+.git
+.githooks
+.ruff_cache
+.pytest_cache
+**/__pycache__
+
+# Local virtualenvs and build outputs (rebuilt in-image from the lockfiles)
+**/.venv
+python/dist
+**/*.egg-info
+
+# The other monorepo halves and heavy docs — not part of the Python image.
+# graduated_problems/ is kept: the synthetic acceptance suite loads it.
+haskell
+docs
+*.pdf
+
+# Agent / editor / local config
+.claude
+.gemini
+.beads
+CLAUDE.local.md
+handoff-*.md
+*.puppeteer.json
