@@ -42,7 +42,14 @@ from datetime import timedelta
 
 from .adapters.observability import NullObservability
 from .domain.pareto import add_to_frontier, pareto_frontier
-from .domain.types import EvalSuiteRef, RunConfig, RunEvent, Trial, VersionVector
+from .domain.types import (
+    EvalSuiteRef,
+    HaltReason,
+    RunConfig,
+    RunEvent,
+    Trial,
+    VersionVector,
+)
 from .logging_config import log_context
 from .ports.observability_port import ObservabilityPort
 from .ports.package_proposer_port import PackageProposerPort
@@ -64,9 +71,7 @@ class OptimizerResult:
     run_id: str
     trials: list[Trial]
     frontier_trial_ids: list[str]
-    halted_reason: str
-    # "budget" | "exhausted" | "per_run_cost_cap"
-    # | "circuit_breaker_errors" | "circuit_breaker_time"
+    halted_reason: HaltReason
 
 
 def _default_trial_id_factory() -> str:
@@ -143,7 +148,7 @@ class OptimizerDriver:
 
         history = self._persistence.load_trials()
         new_trials: list[Trial] = []
-        halted_reason = "budget"
+        halted_reason: HaltReason = "budget"
         run_warning_emitted = False
         consecutive_errors = 0
         run_started_at = self._monotonic_clock()

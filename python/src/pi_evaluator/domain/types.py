@@ -22,6 +22,24 @@ Outcome = Literal["completed", "boundary_violation", "error_escalated"]
 """
 
 
+HaltReason = Literal[
+    "budget",
+    "exhausted",
+    "per_run_cost_cap",
+    "circuit_breaker_errors",
+    "circuit_breaker_time",
+]
+"""Why an ``OptimizerDriver`` run stopped (ADR 0005 / ADR 0007).
+
+* ``budget``: the trial budget was exhausted normally.
+* ``exhausted``: the proposer ran out of candidates (slot space fully
+  covered by history) before the budget was spent.
+* ``per_run_cost_cap``: cumulative cost crossed the per-run cap.
+* ``circuit_breaker_errors`` / ``circuit_breaker_time``: the circuit
+  breaker tripped on consecutive errors / time without a completed trial.
+"""
+
+
 @dataclass(frozen=True)
 class Package:
     """A user-harness instance plus model selection.
