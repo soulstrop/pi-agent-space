@@ -12,6 +12,7 @@ import random
 from dataclasses import asdict
 
 import pytest
+from builders import make_eval_suite_ref, make_version_vector
 
 from pi_evaluator.adapters.random_from_slot_space import RandomFromSlotSpace
 from pi_evaluator.adapters.surrogate_proposer import SurrogateProposer
@@ -19,18 +20,18 @@ from pi_evaluator.domain.featurize import FeatureEncoder
 from pi_evaluator.domain.identity import candidate_identity
 from pi_evaluator.domain.slot_space import NamedValue, SlotSpace
 from pi_evaluator.domain.types import (
-    EvalSuiteRef,
     Metrics,
     Outcome,
     Package,
     Trial,
     TrialEvent,
-    VersionVector,
 )
 from pi_evaluator.ports.package_proposer_port import PackageProposerPort
 
-_REF = EvalSuiteRef(suite_id="s", suite_version="v")
-_VV = VersionVector(pi_version="0.74.0", package_versions={}, eval_suite_version="v")
+_REF = make_eval_suite_ref(suite_id="s", suite_version="v")
+_VV = make_version_vector(
+    pi_version="0.74.0", package_versions={}, eval_suite_version="v"
+)
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────

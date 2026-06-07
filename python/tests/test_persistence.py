@@ -3,12 +3,13 @@ import logging
 import tomllib
 from pathlib import Path
 
+from builders import make_eval_suite_ref, make_version_vector
+
 from pi_evaluator.adapters.per_trial_directory_adapter import (
     SCHEMA_VERSION,
     PerTrialDirectoryAdapter,
 )
 from pi_evaluator.domain.types import (
-    EvalSuiteRef,
     Metrics,
     Package,
     RunConfig,
@@ -16,7 +17,6 @@ from pi_evaluator.domain.types import (
     SubjectiveScore,
     Trial,
     TrialEvent,
-    VersionVector,
 )
 from pi_evaluator.ports.persistence_port import PersistencePort
 
@@ -30,8 +30,8 @@ def _trial(trial_id: str = "t-001") -> Trial:
             skills=["lint"],
             template_values={"lang": "python"},
         ),
-        eval_suite_ref=EvalSuiteRef(suite_id="coding_v1", suite_version="1.0.0"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="coding_v1", suite_version="1.0.0"),
+        version_vector=make_version_vector(
             pi_version="0.4.2",
             package_versions={"lint": "1.0"},
             eval_suite_version="1.0.0",
@@ -299,8 +299,8 @@ def test_trial_without_run_id_loads_as_none(tmp_path):
 
 def _run_config() -> RunConfig:
     return RunConfig(
-        eval_suite_ref=EvalSuiteRef(suite_id="coding_v1", suite_version="1.0.0"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="coding_v1", suite_version="1.0.0"),
+        version_vector=make_version_vector(
             pi_version="0.74.0",
             package_versions={},
             eval_suite_version="1.0.0",

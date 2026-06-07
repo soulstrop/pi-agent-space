@@ -1,15 +1,14 @@
 from dataclasses import FrozenInstanceError
 
 import pytest
+from builders import make_eval_suite_ref, make_version_vector
 
 from pi_evaluator.domain.types import (
-    EvalSuiteRef,
     Metrics,
     Package,
     SubjectiveScore,
     Trial,
     TrialEvent,
-    VersionVector,
 )
 
 
@@ -23,11 +22,11 @@ def _pkg():
 
 
 def _suite():
-    return EvalSuiteRef(suite_id="coding_v1", suite_version="1.0.0")
+    return make_eval_suite_ref(suite_id="coding_v1", suite_version="1.0.0")
 
 
 def _versions():
-    return VersionVector(
+    return make_version_vector(
         pi_version="0.4.2",
         package_versions={"lint": "1.0"},
         eval_suite_version="1.0.0",

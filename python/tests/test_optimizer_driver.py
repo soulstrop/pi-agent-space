@@ -6,6 +6,7 @@ import random
 from pathlib import Path
 
 import pytest
+from builders import make_eval_suite_ref, make_version_vector
 
 from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryAdapter
 from pi_evaluator.adapters.random_from_slot_space import RandomFromSlotSpace
@@ -26,11 +27,11 @@ from pi_evaluator.trial_runner import TrialRunner
 
 
 def _suite_ref() -> EvalSuiteRef:
-    return EvalSuiteRef(suite_id="coding_v1", suite_version="0.1.0")
+    return make_eval_suite_ref(suite_id="coding_v1", suite_version="0.1.0")
 
 
 def _versions() -> VersionVector:
-    return VersionVector(
+    return make_version_vector(
         pi_version="0.74.0", package_versions={}, eval_suite_version="0.1.0"
     )
 

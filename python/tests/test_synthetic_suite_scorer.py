@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import pytest
+from builders import make_eval_suite_ref, make_version_vector
 
 from pi_evaluator.adapters.synthetic_suite_scorer import SyntheticSuiteScorer
 from pi_evaluator.domain.types import (
-    EvalSuiteRef,
     Package,
     RawTelemetry,
     Trial,
     ValidationResult,
-    VersionVector,
 )
 from pi_evaluator.ports.scoring_port import ScoringPort
 
@@ -45,8 +44,8 @@ def _trial() -> Trial:
             skills=[],
             template_values={},
         ),
-        eval_suite_ref=EvalSuiteRef(suite_id="s", suite_version="1.0"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="s", suite_version="1.0"),
+        version_vector=make_version_vector(
             pi_version="0.73", package_versions={}, eval_suite_version="1.0"
         ),
     )

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import random
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ from acceptance_support import (
     VALID_OUTCOMES,
     require_pi_and_model,
 )
+from builders import make_eval_suite_ref, make_version_vector
 
 from pi_evaluator.adapters.cli_subprocess_adapter import CliSubprocessAdapter
 from pi_evaluator.adapters.graduated_problem_set_adapter import (
@@ -43,6 +45,7 @@ from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryA
 from pi_evaluator.adapters.random_from_slot_space import RandomFromSlotSpace
 from pi_evaluator.adapters.sandbox import select_sandbox
 from pi_evaluator.adapters.synthetic_suite_scorer import SyntheticSuiteScorer
+from pi_evaluator.domain.identity import candidate_identity
 from pi_evaluator.domain.slot_space import NamedValue, SlotSpace
 from pi_evaluator.domain.types import EvalSuiteRef, VersionVector
 from pi_evaluator.optimizer_driver import OptimizerDriver
@@ -50,11 +53,11 @@ from pi_evaluator.trial_runner import TrialRunner
 
 
 def _suite_ref() -> EvalSuiteRef:
-    return EvalSuiteRef(suite_id="coding_v1", suite_version="0.1.0")
+    return make_eval_suite_ref(suite_id="coding_v1", suite_version="0.1.0")
 
 
 def _versions() -> VersionVector:
-    return VersionVector(
+    return make_version_vector(
         pi_version="0.74.0",
         package_versions={
             "read": "builtin",
@@ -154,16 +157,17 @@ def _run(
     proposed_ids = {t.trial_id for t in result.trials}
     assert set(frontier["trial_ids"]).issubset(proposed_ids)
 
-    package_signatures = {
-        (
-            t.package.model,
-            t.package.system_prompt,
-            tuple(sorted(t.package.skills)),
-            tuple(sorted(t.package.template_values.items())),
-        )
+    # Each proposed package must be distinct. Use the same content-addressable
+    # identity the proposer dedups on (candidate_identity) rather than
+    # re-deriving the canonicalization here — eval_suite_ref / version_vector
+    # are fixed across the run, so identities differ only by package.
+    suite_ref = asdict(_suite_ref())
+    versions = asdict(_versions())
+    package_identities = {
+        candidate_identity(asdict(t.package), suite_ref, versions)
         for t in result.trials
     }
-    assert len(package_signatures) == len(result.trials)
+    assert len(package_identities) == len(result.trials)
 
 
 @pytest.mark.acceptance_fast

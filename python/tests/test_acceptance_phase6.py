@@ -42,6 +42,7 @@ from acceptance_support import (
     VALID_OUTCOMES,
     require_pi_and_model,
 )
+from builders import make_eval_suite_ref, make_version_vector
 
 from pi_evaluator.adapters.cli_subprocess_adapter import CliSubprocessAdapter
 from pi_evaluator.adapters.ehvi_acquisition import EHVIAcquisition
@@ -74,11 +75,11 @@ _N_SEED = 4
 
 
 def _suite_ref() -> EvalSuiteRef:
-    return EvalSuiteRef(suite_id="coding_v1", suite_version="0.1.0")
+    return make_eval_suite_ref(suite_id="coding_v1", suite_version="0.1.0")
 
 
 def _versions() -> VersionVector:
-    return VersionVector(
+    return make_version_vector(
         pi_version="0.74.0",
         package_versions={"read": "builtin", "write": "builtin", "edit": "builtin"},
         eval_suite_version="0.1.0",

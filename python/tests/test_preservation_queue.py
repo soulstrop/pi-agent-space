@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+from builders import make_eval_suite_ref, make_version_vector
+
 from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryAdapter
 from pi_evaluator.domain.types import (
-    EvalSuiteRef,
     Metrics,
     Outcome,
     Package,
     Trial,
-    VersionVector,
 )
 from pi_evaluator.preservation_queue import preserved_error_trials
 
@@ -23,8 +23,8 @@ def _trial(trial_id: str) -> Trial:
             skills=[],
             template_values={},
         ),
-        eval_suite_ref=EvalSuiteRef(suite_id="coding_v1", suite_version="1.0.0"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="coding_v1", suite_version="1.0.0"),
+        version_vector=make_version_vector(
             pi_version="0.4.2",
             package_versions={},
             eval_suite_version="1.0.0",

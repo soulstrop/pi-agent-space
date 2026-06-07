@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import random
 
+from builders import make_eval_suite_ref, make_version_vector
+
 from pi_evaluator.adapters.random_from_slot_space import RandomFromSlotSpace
 from pi_evaluator.domain.slot_space import NamedValue, SlotSpace
 from pi_evaluator.domain.types import (
@@ -14,11 +16,11 @@ from pi_evaluator.ports.package_proposer_port import PackageProposerPort
 
 
 def _suite_ref() -> EvalSuiteRef:
-    return EvalSuiteRef(suite_id="coding_v1", suite_version="0.1.0")
+    return make_eval_suite_ref(suite_id="coding_v1", suite_version="0.1.0")
 
 
 def _versions() -> VersionVector:
-    return VersionVector(
+    return make_version_vector(
         pi_version="0.74.0", package_versions={}, eval_suite_version="0.1.0"
     )
 
@@ -124,7 +126,7 @@ def test_history_with_different_eval_suite_does_not_dedup():
     against this proposer's eval suite."""
     space = _slot_space()
     first = next(space.iter_packages())
-    other_suite = EvalSuiteRef(suite_id="other", suite_version="0.1.0")
+    other_suite = make_eval_suite_ref(suite_id="other", suite_version="0.1.0")
     foreign_trial = Trial(
         trial_id="foreign",
         package=first,

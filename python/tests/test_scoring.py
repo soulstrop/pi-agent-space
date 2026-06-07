@@ -1,12 +1,12 @@
+from builders import make_eval_suite_ref, make_version_vector
+
 from pi_evaluator.adapters.stub_scorer import StubScorer
 from pi_evaluator.domain.types import (
-    EvalSuiteRef,
     Metrics,
     Package,
     RawTelemetry,
     SubjectiveScore,
     Trial,
-    VersionVector,
 )
 from pi_evaluator.ports.scoring_port import ScoringPort
 
@@ -15,8 +15,8 @@ def _trial() -> Trial:
     return Trial(
         trial_id="t-1",
         package=Package(model="m", system_prompt="", skills=[], template_values={}),
-        eval_suite_ref=EvalSuiteRef(suite_id="s", suite_version="1.0"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="s", suite_version="1.0"),
+        version_vector=make_version_vector(
             pi_version="0.1", package_versions={}, eval_suite_version="1.0"
         ),
     )

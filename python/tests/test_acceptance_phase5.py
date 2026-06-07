@@ -19,6 +19,8 @@ from __future__ import annotations
 import itertools
 from pathlib import Path
 
+from builders import make_eval_suite_ref, make_version_vector
+
 from pi_evaluator.adapters.graduated_problem_set_adapter import (
     GraduatedProblemSetAdapter,
 )
@@ -63,11 +65,11 @@ def _package() -> Package:
 
 
 def _suite_ref() -> EvalSuiteRef:
-    return EvalSuiteRef(suite_id="coding_v1", suite_version="phase5")
+    return make_eval_suite_ref(suite_id="coding_v1", suite_version="phase5")
 
 
 def _versions() -> VersionVector:
-    return VersionVector(
+    return make_version_vector(
         pi_version="0.74.0",
         package_versions={},
         eval_suite_version="phase5",

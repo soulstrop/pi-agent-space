@@ -7,6 +7,7 @@ build_training_data() function.
 from __future__ import annotations
 
 import pytest
+from builders import make_eval_suite_ref, make_version_vector
 
 from pi_evaluator.domain.featurize import FeatureEncoder
 from pi_evaluator.domain.slot_space import NamedValue, SlotSpace
@@ -16,14 +17,12 @@ from pi_evaluator.domain.surrogate_data import (
     build_training_data,
 )
 from pi_evaluator.domain.types import (
-    EvalSuiteRef,
     Metrics,
     Outcome,
     Package,
     SubjectiveScore,
     Trial,
     TrialEvent,
-    VersionVector,
 )
 
 # ── fixtures ─────────────────────────────────────────────────────────────────
@@ -115,8 +114,8 @@ def _trial(
             skills=["read"],
             template_values={},
         ),
-        eval_suite_ref=EvalSuiteRef(suite_id="s", suite_version="v"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="s", suite_version="v"),
+        version_vector=make_version_vector(
             pi_version="0.74.0", package_versions={}, eval_suite_version="v"
         ),
         events=events,
@@ -244,8 +243,8 @@ def test_trial_missing_required_metric_excluded():
             skills=["read"],
             template_values={},
         ),
-        eval_suite_ref=EvalSuiteRef(suite_id="s", suite_version="v"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="s", suite_version="v"),
+        version_vector=make_version_vector(
             pi_version="0.74.0", package_versions={}, eval_suite_version="v"
         ),
         events=events,

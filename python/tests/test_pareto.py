@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from builders import make_eval_suite_ref, make_version_vector
+
 from pi_evaluator.domain.pareto import pareto_frontier, subjective_axis
 from pi_evaluator.domain.types import (
-    EvalSuiteRef,
     Metrics,
     Outcome,
     Package,
     SubjectiveScore,
     Trial,
     TrialEvent,
-    VersionVector,
 )
 
 
@@ -116,8 +116,8 @@ def _trial(
     return Trial(
         trial_id=trial_id,
         package=_package(),
-        eval_suite_ref=EvalSuiteRef(suite_id="s", suite_version="v"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="s", suite_version="v"),
+        version_vector=make_version_vector(
             pi_version="0.74.0", package_versions={}, eval_suite_version="v"
         ),
         events=events,
@@ -145,8 +145,8 @@ def _multi_problem_trial(
     return Trial(
         trial_id=trial_id,
         package=_package(),
-        eval_suite_ref=EvalSuiteRef(suite_id="s", suite_version="v"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="s", suite_version="v"),
+        version_vector=make_version_vector(
             pi_version="0.74.0", package_versions={}, eval_suite_version="v"
         ),
         events=events,
@@ -332,8 +332,8 @@ def test_trial_without_required_metrics_excluded():
     incomplete = Trial(
         trial_id="incomplete",
         package=_package(),
-        eval_suite_ref=EvalSuiteRef(suite_id="s", suite_version="v"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="s", suite_version="v"),
+        version_vector=make_version_vector(
             pi_version="0.74.0", package_versions={}, eval_suite_version="v"
         ),
         events=missing_dollars_events,

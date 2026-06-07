@@ -32,6 +32,7 @@ from pathlib import Path
 
 import pytest
 from acceptance_support import GRADUATED_PROBLEMS_DIR, require_pi_and_model
+from builders import make_eval_suite_ref, make_version_vector
 
 from pi_evaluator.adapters.cli_subprocess_adapter import CliSubprocessAdapter
 from pi_evaluator.adapters.graduated_problem_set_adapter import (
@@ -40,7 +41,7 @@ from pi_evaluator.adapters.graduated_problem_set_adapter import (
 from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryAdapter
 from pi_evaluator.adapters.sandbox import select_sandbox
 from pi_evaluator.adapters.synthetic_suite_scorer import SyntheticSuiteScorer
-from pi_evaluator.domain.types import EvalSuiteRef, Package, VersionVector
+from pi_evaluator.domain.types import Package
 from pi_evaluator.trial_runner import TrialRunner
 
 
@@ -76,8 +77,8 @@ def _run(tmp_path: Path, *, retry_budget: int) -> None:
     trial = runner.run_trial(
         trial_id="phase2-acceptance",
         package=package,
-        eval_suite_ref=EvalSuiteRef(suite_id="coding_v1", suite_version="0.1.0"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="coding_v1", suite_version="0.1.0"),
+        version_vector=make_version_vector(
             pi_version="0.73.0",
             package_versions={
                 "read": "builtin",

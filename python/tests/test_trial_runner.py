@@ -5,6 +5,7 @@ import json
 import subprocess
 
 import pytest
+from builders import make_eval_suite_ref, make_version_vector
 
 from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryAdapter
 from pi_evaluator.adapters.stub_agent_harness_adapter import StubAgentHarnessAdapter
@@ -53,11 +54,11 @@ def _package() -> Package:
 
 
 def _suite_ref() -> EvalSuiteRef:
-    return EvalSuiteRef(suite_id="coding_v1", suite_version="1.0.0")
+    return make_eval_suite_ref(suite_id="coding_v1", suite_version="1.0.0")
 
 
 def _versions() -> VersionVector:
-    return VersionVector(
+    return make_version_vector(
         pi_version="0.4.2",
         package_versions={"lint": "1.0"},
         eval_suite_version="1.0.0",

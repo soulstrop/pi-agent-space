@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 import pytest
+from builders import make_eval_suite_ref, make_version_vector
 
 from pi_evaluator.adapters.graduated_problem_set_adapter import (
     GraduatedProblemSetAdapter,
@@ -22,11 +23,9 @@ from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryA
 from pi_evaluator.adapters.stub_agent_harness_adapter import StubAgentHarnessAdapter
 from pi_evaluator.adapters.stub_scorer import StubScorer
 from pi_evaluator.domain.types import (
-    EvalSuiteRef,
     Metrics,
     Package,
     RawTelemetry,
-    VersionVector,
 )
 from pi_evaluator.trial_runner import TrialRunner
 
@@ -67,8 +66,8 @@ def test_phase1_acceptance_end_to_end(tmp_path):
         clock=lambda c=itertools.count(): f"2026-05-06T00:00:{next(c):02d}Z",
     )
 
-    suite_ref = EvalSuiteRef(suite_id="coding_v1", suite_version="0.1.0")
-    versions = VersionVector(
+    suite_ref = make_eval_suite_ref(suite_id="coding_v1", suite_version="0.1.0")
+    versions = make_version_vector(
         pi_version="0.4.2",
         package_versions={"read": "1.0", "write": "1.0", "edit": "1.0", "bash": "1.0"},
         eval_suite_version="0.1.0",

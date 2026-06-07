@@ -8,14 +8,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from builders import make_eval_suite_ref, make_version_vector
 
 from pi_evaluator.adapters.per_trial_directory_adapter import PerTrialDirectoryAdapter
 from pi_evaluator.domain.types import (
-    EvalSuiteRef,
     Metrics,
     Package,
     Trial,
-    VersionVector,
 )
 
 
@@ -26,8 +25,8 @@ def _setup_completed_trial(base: Path, trial_id: str = "t-001") -> None:
         package=Package(
             model="gemini-flash", system_prompt="", skills=[], template_values={}
         ),
-        eval_suite_ref=EvalSuiteRef(suite_id="coding_v1", suite_version="1.0.0"),
-        version_vector=VersionVector(
+        eval_suite_ref=make_eval_suite_ref(suite_id="coding_v1", suite_version="1.0.0"),
+        version_vector=make_version_vector(
             pi_version="0.4.2", package_versions={}, eval_suite_version="1.0.0"
         ),
     )
@@ -90,8 +89,10 @@ class TestScoreCLIErrorCases:
             package=Package(
                 model="gemini-flash", system_prompt="", skills=[], template_values={}
             ),
-            eval_suite_ref=EvalSuiteRef(suite_id="coding_v1", suite_version="1.0.0"),
-            version_vector=VersionVector(
+            eval_suite_ref=make_eval_suite_ref(
+                suite_id="coding_v1", suite_version="1.0.0"
+            ),
+            version_vector=make_version_vector(
                 pi_version="0.4.2", package_versions={}, eval_suite_version="1.0.0"
             ),
         )
