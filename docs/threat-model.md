@@ -45,7 +45,7 @@ below the process boundary.
 | A2 | Model-provider API keys (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`) | Operator's environment; forwarded into the agent |
 | A3 | Measurement integrity — honest `(package, problem)` capability numbers | Trial workspaces, persisted metrics |
 | A4 | Host resources — CPU, memory, file descriptors, process table | The machine running the evaluator |
-| A5 | Persisted artifacts — `config.json`, `versions.json`, `events.jsonl`, `final.json` | The run/trial directory tree (ADR 0003) |
+| A5 | Persisted artifacts — `config.json`, `versions.json`, `events.jsonl`, `final.json`, `run_summary.json` | The run/trial directory tree (ADR 0003, ADR 0013, ADR 0022) |
 | A6 | Supply chain — Python deps, `mise` tool versions, the `pi` binary | Lockfiles, `mise.toml`, the resolved dependency tree |
 
 ## Threat catalog
@@ -93,6 +93,7 @@ the v1 disposition. "✅ closed" = mitigated in v1; "🔒 v1" = committed v1 wor
 | --- | --- | --- | --- |
 | Secrets land in `events.jsonl` and leak when the run dir is shared | Information disclosure | Persistence redaction layer (same as A2) | ✅ closed (ADR 0020 D1, `28g`) |
 | Malformed / forward-version files crash the reader | Availability | ADR 0019 tolerant reader + schema-version stamp | ✅ closed |
+| `run_summary.json` leaks secrets when the run dir is shared | Information disclosure | Carries only numeric run aggregates (outcome counts, cost, timings) + `run_id`/`halted_reason` — no agent-authored telemetry — so it is secret-free by construction and needs no redaction (ADR 0022 D2) | ✅ closed (by construction) |
 
 ### A6 — Supply chain
 
