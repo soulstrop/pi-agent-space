@@ -6,6 +6,8 @@ Instructions for deploying, operating, and maintaining the pi-agent-space.
 
 [ADR 0009](../../adrs/0009-trial-isolation-boundary.md) introduces `BwrapSandbox` as the v1 isolation mechanism for trial execution. The sandbox itself is opt-in at code wiring time, but bwrap has a host-level prerequisite that operators must satisfy: **bwrap uses Linux user namespaces internally** (regardless of whether `--unshare-user` is requested), and modern Ubuntu kernels (24.04+) ship with `kernel.apparmor_restrict_unprivileged_userns=1`, which blocks bwrap from setting up its sandbox.
 
+**The real-`pi` path now hard-fails without a working sandbox.** The acceptance suite selects its sandbox via `select_sandbox()`, which **refuses to run the agent unisolated**: if bwrap cannot create a sandbox on the host, the run raises rather than silently falling back to no isolation. To run real trials you must therefore complete one of the Family 1 enablement paths below — or, to deliberately run *without* isolation (macOS, a throwaway VM, CI without bwrap), set `PI_ALLOW_UNSANDBOXED=1`, which falls back to `NullSandbox` and logs a loud `WARNING`. Unit tests and the smoke harness are unaffected: `CliSubprocessAdapter`'s default is still `NullSandbox`.
+
 The visible symptom is:
 
 ```
