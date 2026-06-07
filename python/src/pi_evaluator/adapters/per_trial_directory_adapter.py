@@ -11,6 +11,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..domain.redaction import redact_json
 from ..domain.tolerant_read import tolerant
 from ..domain.types import (
     EvalSuiteRef,
@@ -70,9 +71,14 @@ class PerTrialDirectoryAdapter(PersistencePort):
 
     @staticmethod
     def _append_jsonl(path: Path, obj: dict) -> None:
-        """Append one canonical-JSON line to a .jsonl file."""
+        """Append one canonical-JSON line to a .jsonl file.
+
+        Telemetry is redacted of known provider-key shapes before it touches
+        disk (ADR 0020 D1): ``events.jsonl`` carries raw stderr and malformed
+        stdout lines that may contain secrets the agent printed.
+        """
         with path.open("a") as f:
-            f.write(json.dumps(obj, sort_keys=True) + "\n")
+            f.write(json.dumps(redact_json(obj), sort_keys=True) + "\n")
 
     @staticmethod
     def _check_schema_version(file_version: object, *, where: str) -> None:

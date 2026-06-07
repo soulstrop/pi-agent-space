@@ -67,7 +67,7 @@ the v1 disposition. "✅ closed" = mitigated in v1; "🔒 v1" = committed v1 wor
 | Threat | Category | Mitigation | Disposition |
 | --- | --- | --- | --- |
 | Keys written to logs | Information disclosure | ADR 0015 MD6-A: call sites log identifiers/counts/costs, never raw key material | ✅ closed (by discipline) |
-| Keys written to `events.jsonl` via raw stderr / malformed lines | Information disclosure | **Redaction layer in the persistence write path** scrubs key shapes before write | 🔒 v1 (ADR 0020 D1, issue `28g`) |
+| Keys written to `events.jsonl` via raw stderr / malformed lines | Information disclosure | Redaction layer in the persistence write path (`domain/redaction.py`) scrubs `sk-…`/`AIza…`/`Bearer`/`x-api-key` shapes before every jsonl line is written | ✅ closed (ADR 0020 D1, `28g`) |
 | Agent exfiltrates keys over the open network | Information disclosure | None — network is required for the model call (ADR 0009 residual) | ⏭ deferred — egress filtering is enterprise-scenario |
 | Long-lived env-var keys, no rotation | Credential management | Accepted for a single operator | ⏭ deferred — rotation/OIDC is enterprise (`622`) |
 
@@ -91,7 +91,7 @@ the v1 disposition. "✅ closed" = mitigated in v1; "🔒 v1" = committed v1 wor
 
 | Threat | Category | Mitigation | Disposition |
 | --- | --- | --- | --- |
-| Secrets land in `events.jsonl` and leak when the run dir is shared | Information disclosure | Persistence redaction layer (same as A2) | 🔒 v1 (ADR 0020 D1, `28g`) |
+| Secrets land in `events.jsonl` and leak when the run dir is shared | Information disclosure | Persistence redaction layer (same as A2) | ✅ closed (ADR 0020 D1, `28g`) |
 | Malformed / forward-version files crash the reader | Availability | ADR 0019 tolerant reader + schema-version stamp | ✅ closed |
 
 ### A6 — Supply chain
@@ -109,8 +109,9 @@ are listed so the threat model is complete and nothing is silently dropped.
 
 ## v1 commitments (this threat model's "must-close" set)
 
-1. **Persistence-layer secret redaction** — scrub provider-key shapes from
+1. ✅ **Persistence-layer secret redaction** — scrub provider-key shapes from
    telemetry before it is written to `events.jsonl`. ADR 0020 D1 · issue `28g`.
+   *Done:* `domain/redaction.py` is applied in `PerTrialDirectoryAdapter._append_jsonl`.
 2. **OS-level resource caps** — `systemd-run --scope` cgroup wrap around the
    bwrap invocation, degrading gracefully where `systemd-run` is absent. ADR 0020
    D2 · ADR 0009 rung 1+.

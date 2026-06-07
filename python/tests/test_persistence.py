@@ -72,6 +72,30 @@ def test_append_event_appends_one_line_per_call(tmp_path):
     assert json.loads(lines[1])["phase"] == "eval"
 
 
+def test_append_event_redacts_secrets_before_write(tmp_path):
+    # ADR 0020 D1: provider-key shapes in raw telemetry must not hit disk.
+    adapter = PerTrialDirectoryAdapter(tmp_path)
+    adapter.save_trial(_trial())
+    adapter.append_event(
+        "t-001",
+        TrialEvent(
+            phase="eval",
+            timestamp="t1",
+            payload={
+                "stderr": "auth failed: sk-proj-abcdefghijklmnopqrstuvwxyz0123456789",
+                "malformed_lines": ["AIzaSyA1234567890abcdefghijklmnopqrstuvw"],
+            },
+        ),
+    )
+    raw = (tmp_path / "t-001" / "events.jsonl").read_text()
+    assert "sk-proj-" not in raw
+    assert "AIza" not in raw
+    assert "[REDACTED]" in raw
+    # the surrounding structure survives — only the secret value is scrubbed
+    event = json.loads(raw.splitlines()[0])
+    assert event["payload"]["stderr"].startswith("auth failed:")
+
+
 def test_append_is_order_preserving_across_repeated_calls(tmp_path):
     adapter = PerTrialDirectoryAdapter(tmp_path)
     adapter.save_trial(_trial())
