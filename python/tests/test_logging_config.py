@@ -6,7 +6,7 @@ import json
 import logging
 import re
 
-from pi_evaluator.logging_config import JsonFormatter
+from pi_evaluator.logging_config import ContextFilter, JsonFormatter, log_context
 
 
 def _format(
@@ -102,3 +102,56 @@ class TestJsonFormatterOutput:
     def test_non_serialisable_extra_becomes_string(self):
         result = _format(extra={"obj": object()})
         assert isinstance(result["obj"], str)
+
+
+def _record() -> logging.LogRecord:
+    return logging.LogRecord("pi_evaluator.t", logging.INFO, "p", 1, "m", (), None)
+
+
+class TestContextBinding:
+    """MD3-A / commitment 1: run_id + trial_id stamped via contextvars."""
+
+    def test_filter_stamps_run_and_trial_inside_context(self):
+        f = ContextFilter()
+        with log_context(run_id="r1", trial_id="t1"):
+            rec = _record()
+            assert f.filter(rec) is True
+            assert getattr(rec, "run_id") == "r1"
+            assert getattr(rec, "trial_id") == "t1"
+
+    def test_filter_stamps_nothing_outside_context(self):
+        f = ContextFilter()
+        rec = _record()
+        f.filter(rec)
+        assert not hasattr(rec, "run_id")
+        assert not hasattr(rec, "trial_id")
+
+    def test_context_resets_on_exit(self):
+        f = ContextFilter()
+        with log_context(run_id="r1"):
+            pass
+        rec = _record()
+        f.filter(rec)
+        assert not hasattr(rec, "run_id")
+
+    def test_trial_context_nests_within_run(self):
+        f = ContextFilter()
+        with log_context(run_id="r1"):
+            with log_context(trial_id="t1"):
+                inner = _record()
+                f.filter(inner)
+                assert getattr(inner, "run_id") == "r1"
+                assert getattr(inner, "trial_id") == "t1"
+            after = _record()
+            f.filter(after)
+            assert getattr(after, "run_id") == "r1"
+            assert not hasattr(after, "trial_id")
+
+    def test_stamped_fields_reach_json_output(self):
+        f = ContextFilter()
+        with log_context(run_id="r9", trial_id="t9"):
+            rec = _record()
+            f.filter(rec)
+        result = json.loads(JsonFormatter().format(rec))
+        assert result["run_id"] == "r9"
+        assert result["trial_id"] == "t9"

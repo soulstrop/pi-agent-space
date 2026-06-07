@@ -42,6 +42,7 @@ from datetime import timedelta
 
 from .domain.pareto import add_to_frontier, pareto_frontier
 from .domain.types import EvalSuiteRef, RunConfig, RunEvent, Trial, VersionVector
+from .logging_config import log_context
 from .ports.package_proposer_port import PackageProposerPort
 from .ports.persistence_port import PersistencePort
 from .trial_runner import COST_CAP_WARNING_FRACTION, TrialRunner
@@ -111,6 +112,10 @@ class OptimizerDriver:
 
     def run(self, trial_budget: int) -> OptimizerResult:
         run_id = str(uuid.uuid4())
+        with log_context(run_id=run_id):
+            return self._run(run_id, trial_budget)
+
+    def _run(self, run_id: str, trial_budget: int) -> OptimizerResult:
         run_config = RunConfig(
             eval_suite_ref=self._eval_suite_ref,
             version_vector=self._version_vector,
@@ -147,14 +152,15 @@ class OptimizerDriver:
 
             trial_id = self._trial_id_factory()
             self._persistence.record_trial_dispatched(run_id, trial_id)
-            trial = self._runner.run_trial(
-                trial_id=trial_id,
-                run_id=run_id,
-                package=package,
-                eval_suite_ref=self._eval_suite_ref,
-                version_vector=self._version_vector,
-                per_trial_cost_cap_usd=self._per_trial_cost_cap_usd,
-            )
+            with log_context(trial_id=trial_id):
+                trial = self._runner.run_trial(
+                    trial_id=trial_id,
+                    run_id=run_id,
+                    package=package,
+                    eval_suite_ref=self._eval_suite_ref,
+                    version_vector=self._version_vector,
+                    per_trial_cost_cap_usd=self._per_trial_cost_cap_usd,
+                )
             assert trial.outcome is not None  # run_trial always sets outcome
             self._persistence.record_trial_closed(run_id, trial_id, trial.outcome)
             new_trials.append(trial)

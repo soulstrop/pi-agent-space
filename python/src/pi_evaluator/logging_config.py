@@ -22,6 +22,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -36,6 +39,57 @@ _SKIP: frozenset[str] = frozenset({
 # Silence "No handlers could be found" for library consumers that don't
 # call configure_logging.
 logging.getLogger("pi_evaluator").addHandler(logging.NullHandler())
+
+# MD3-A / commitment 1: run- and trial-scoped correlation IDs are carried in
+# contextvars and stamped onto every record by ContextFilter, so no call site
+# threads them through ``extra``. contextvars propagate correctly into
+# asyncio.Tasks and, critically, are read at log time (in the originating
+# context) — so attaching ContextFilter to the emitting handler keeps it correct
+# under the QueueHandler isolation in commitment 5.
+_run_id_var: ContextVar[str | None] = ContextVar("pi_evaluator_run_id", default=None)
+_trial_id_var: ContextVar[str | None] = ContextVar(
+    "pi_evaluator_trial_id", default=None
+)
+
+
+@contextmanager
+def log_context(
+    *, run_id: str | None = None, trial_id: str | None = None
+) -> Iterator[None]:
+    """Bind ``run_id`` and/or ``trial_id`` for the duration of the block.
+
+    Set once at the run/trial boundary; ContextFilter stamps the bound values
+    onto every record emitted within. Resets on exit (including on exception),
+    so a trial's id does not leak past its trial.
+    """
+    tokens = []
+    if run_id is not None:
+        tokens.append((_run_id_var, _run_id_var.set(run_id)))
+    if trial_id is not None:
+        tokens.append((_trial_id_var, _trial_id_var.set(trial_id)))
+    try:
+        yield
+    finally:
+        for var, token in reversed(tokens):
+            var.reset(token)
+
+
+class ContextFilter(logging.Filter):
+    """Stamp the currently-bound correlation IDs onto each record.
+
+    Attached to handlers (not loggers) so it also covers records that propagate
+    up from child loggers. Absent IDs are not stamped, keeping records emitted
+    outside any run/trial context clean.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        run_id = _run_id_var.get()
+        trial_id = _trial_id_var.get()
+        if run_id is not None:
+            record.run_id = run_id
+        if trial_id is not None:
+            record.trial_id = trial_id
+        return True
 
 
 class JsonFormatter(logging.Formatter):
@@ -70,11 +124,15 @@ def configure_logging(
     root = logging.getLogger("pi_evaluator")
     root.setLevel(level)
 
+    context_filter = ContextFilter()
+
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(JsonFormatter())
+    stream_handler.addFilter(context_filter)
     root.addHandler(stream_handler)
 
     if log_file is not None:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(JsonFormatter())
+        file_handler.addFilter(context_filter)
         root.addHandler(file_handler)
