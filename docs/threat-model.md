@@ -84,7 +84,7 @@ the v1 disposition. "✅ closed" = mitigated in v1; "🔒 v1" = committed v1 wor
 | Threat | Category | Mitigation | Disposition |
 | --- | --- | --- | --- |
 | Runaway CPU / memory consumption | Denial of service | ADR 0005 cost cap + ADR 0007 wallclock cap bound the common case | partial |
-| Fork-bomb / fd exhaustion between cap checks | Denial of service | `systemd-run --scope` wrap with `MemoryMax`/`CPUQuota`/`TasksMax` | 🔒 v1 (ADR 0020 D2, ADR 0009 rung 1+) |
+| Fork-bomb / fd exhaustion between cap checks | Denial of service | `ResourceCappedSandbox` wraps the bwrap invocation in `systemd-run --scope` with `MemoryMax`/`CPUQuota`/`TasksMax`; degrades (logs `resource_caps_unenforced`) where `systemd-run` can't create a scope | ✅ closed when enforced (ADR 0020 D2, ADR 0009 rung 1+, `bm9`) |
 | Detached process outlives the trial | Denial of service | ADR 0009 `--die-with-parent` terminates sandboxed processes with the adapter | ✅ closed |
 
 ### A5 — Persisted artifacts
@@ -112,9 +112,12 @@ are listed so the threat model is complete and nothing is silently dropped.
 1. ✅ **Persistence-layer secret redaction** — scrub provider-key shapes from
    telemetry before it is written to `events.jsonl`. ADR 0020 D1 · issue `28g`.
    *Done:* `domain/redaction.py` is applied in `PerTrialDirectoryAdapter._append_jsonl`.
-2. **OS-level resource caps** — `systemd-run --scope` cgroup wrap around the
+2. ✅ **OS-level resource caps** — `systemd-run --scope` cgroup wrap around the
    bwrap invocation, degrading gracefully where `systemd-run` is absent. ADR 0020
-   D2 · ADR 0009 rung 1+.
+   D2 · ADR 0009 rung 1+ · issue `bm9`. *Done:* `ResourceCappedSandbox`
+   decorates `BwrapSandbox` in `select_sandbox`; caps default to
+   `MemoryMax=4G`/`CPUQuota=400%`/`TasksMax=512`, operator-configurable via
+   `ResourceCaps`.
 
 Already shipped and counted as standing mitigations: ADR 0009 (isolation,
 env allowlist, hard-fail `select_sandbox`), ADR 0015 MD6-A (logging discipline),

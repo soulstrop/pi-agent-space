@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..ports.sandbox_port import SandboxedInvocation, SandboxPort
@@ -223,6 +224,154 @@ def bwrap_available(bwrap_binary: str = "bwrap") -> bool:
     return proc.returncode == 0
 
 
+@dataclass(frozen=True)
+class ResourceCaps:
+    """OS-level resource caps for one sandboxed agent run (ADR 0020 D2).
+
+    Each field maps to a systemd resource-control property enforced by the
+    transient ``--scope`` cgroup that wraps the bwrap invocation. ``None``
+    omits that property (no cap on that dimension). The defaults are
+    conservative bounds for a single synthetic-suite trial on a developer
+    workstation: enough headroom for a coding agent and its tools, low enough
+    that a runaway (memory balloon, busy-loop, fork-bomb) is contained between
+    the orchestration layer's cost/wallclock cap checks (ADR 0005/0007).
+    """
+
+    memory_max: str | None = "4G"  # MemoryMax — hard memory ceiling
+    cpu_quota: str | None = "400%"  # CPUQuota — ~4 cores
+    tasks_max: int | None = 512  # TasksMax — fork-bomb / fd-exhaustion guard
+
+    def to_properties(self) -> list[str]:
+        """Render the caps as ``-p KEY=VALUE`` pairs for ``systemd-run``."""
+        props: list[str] = []
+        if self.memory_max is not None:
+            props.extend(["-p", f"MemoryMax={self.memory_max}"])
+        if self.cpu_quota is not None:
+            props.extend(["-p", f"CPUQuota={self.cpu_quota}"])
+        if self.tasks_max is not None:
+            props.extend(["-p", f"TasksMax={self.tasks_max}"])
+        return props
+
+
+def _resolve_scope_mode(scope_mode: str) -> str:
+    """Resolve ``"auto"`` to ``"system"`` when root, else ``"user"``.
+
+    An unprivileged operator must use a ``--user`` scope (the user systemd
+    manager with delegated cgroup controllers); root (e.g. inside a container)
+    has no user manager but can drive the system manager directly.
+    """
+    if scope_mode == "auto":
+        is_root = hasattr(os, "geteuid") and os.geteuid() == 0
+        return "system" if is_root else "user"
+    return scope_mode
+
+
+def systemd_run_available(
+    systemd_run_binary: str = "systemd-run", *, scope_mode: str = "user"
+) -> bool:
+    """Return True if ``systemd-run`` can create a transient ``--scope`` here.
+
+    A binary-only check is insufficient (mirroring ``bwrap_available``): an
+    unprivileged ``--user`` scope needs a running user systemd manager with
+    cgroup delegation, which is absent in many CI and container environments.
+    The probe creates a throwaway scope around ``true`` and checks it exits 0;
+    if it can't, the caller degrades to running without caps.
+    """
+    import subprocess  # local import keeps the module import side-effect free
+
+    if shutil.which(systemd_run_binary) is None:
+        return False
+    true_bin = shutil.which("true") or "/bin/true"
+    probe = [systemd_run_binary]
+    if scope_mode == "user":
+        probe.append("--user")
+    probe.extend(
+        ["--scope", "--quiet", "--collect", "-p", "TasksMax=16", "--", true_bin]
+    )
+    try:
+        proc = subprocess.run(
+            probe, capture_output=True, text=True, timeout=10, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+class ResourceCappedSandbox(SandboxPort):
+    """Decorator that wraps another sandbox's command in a ``systemd-run
+    --scope`` transient cgroup, enforcing OS-level CPU/memory/task caps
+    (ADR 0020 D2 — realises rung 1+ of the ADR 0009 isolation ladder).
+
+    The orchestration-layer cost (ADR 0005) and wallclock (ADR 0007) caps
+    bound the *common* runaway but cannot stop CPU/memory/fd exhaustion or a
+    fork-bomb *between* cap checks. A transient scope makes the kernel enforce
+    hard bounds on the whole bwrap process tree. ``--unshare-cgroup`` inside
+    bwrap only hides the cgroup *path* from the agent; the scope's limits still
+    apply, and the agent cannot move itself out of the scope.
+
+    **Degrades gracefully.** Whether ``systemd-run`` can create a scope is
+    probed *once* at construction (the probe spins up a real transient scope,
+    so it must not run per-``wrap``). When it can't, ``wrap`` returns the inner
+    invocation unchanged and a one-time warning records that the caps are
+    unenforced — never silently assumed.
+    """
+
+    def __init__(
+        self,
+        inner: SandboxPort,
+        caps: ResourceCaps | None = None,
+        systemd_run_binary: str = "systemd-run",
+        scope_mode: str = "auto",
+    ) -> None:
+        self._inner = inner
+        self._caps = caps if caps is not None else ResourceCaps()
+        self._systemd_run = systemd_run_binary
+        self._scope_mode = _resolve_scope_mode(scope_mode)
+        self._enforced = systemd_run_available(
+            systemd_run_binary, scope_mode=self._scope_mode
+        )
+        if not self._enforced:
+            logger.warning(
+                "OS resource caps unenforced: systemd-run cannot create a "
+                "%s scope on this host; the agent runs without "
+                "MemoryMax/CPUQuota/TasksMax",
+                self._scope_mode,
+                extra={
+                    "event": "resource_caps_unenforced",
+                    "scope_mode": self._scope_mode,
+                    "systemd_run_binary": systemd_run_binary,
+                },
+            )
+
+    def wrap(
+        self,
+        cmd: list[str],
+        workspace: Path,
+        env: dict[str, str] | None = None,
+    ) -> SandboxedInvocation:
+        invocation = self._inner.wrap(cmd, workspace=workspace, env=env)
+        if not self._enforced:
+            return invocation
+        return replace(invocation, cmd=self._scope_prefix() + invocation.cmd)
+
+    def _scope_prefix(self) -> list[str]:
+        """Build the ``systemd-run --scope … --`` argv prefix.
+
+        ``--quiet`` suppresses the "Running scope as unit" notice; ``--collect``
+        garbage-collects the unit even if the command fails. With ``--scope``
+        systemd-run execs the command in the foreground inside the scope,
+        inheriting cwd and env — so the adapter's exit-code and ``env=``
+        handling stay valid.
+        """
+        args = [self._systemd_run]
+        if self._scope_mode == "user":
+            args.append("--user")
+        args.extend(["--scope", "--quiet", "--collect"])
+        args.extend(self._caps.to_properties())
+        args.append("--")
+        return args
+
+
 def _pi_install_binds(pi_binary: str) -> tuple[Path, ...]:
     """Resolve auxiliary read-only binds for the agent binary.
 
@@ -247,24 +396,34 @@ def select_sandbox(
     pi_binary: str = "pi",
     allow_unsandboxed: bool | None = None,
     bwrap_binary: str = "bwrap",
+    caps: ResourceCaps | None = None,
 ) -> SandboxPort:
     """Select the isolation strategy for a *real* agent run (ADR 0009, j8x).
 
     Hard-fail posture: agents must not run unisolated by accident.
 
     * If ``bwrap`` can actually create a sandbox on this host, return a
-      ``BwrapSandbox`` (with the Pi install directory bound read-only).
+      ``BwrapSandbox`` (with the Pi install directory bound read-only),
+      wrapped in a ``ResourceCappedSandbox`` so the OS enforces CPU/memory/task
+      caps via ``systemd-run --scope`` (ADR 0020 D2). The cap wrap degrades
+      gracefully where ``systemd-run`` is absent. ``caps`` overrides the
+      conservative defaults.
     * Otherwise **refuse** — raise ``RuntimeError`` — unless the operator has
       explicitly opted out via ``PI_ALLOW_UNSANDBOXED`` (or ``allow_unsandboxed
       =True``), in which case return ``NullSandbox`` after a loud warning.
+      The opt-out path is deliberately unwrapped: it is an explicit "no
+      isolation" escape hatch, and resource caps are tied to the bwrap path.
 
     ``allow_unsandboxed`` takes precedence over the environment when not
     ``None`` (``False`` forces the refusal even if the env var is set).
     """
     if bwrap_available(bwrap_binary):
-        return BwrapSandbox(
-            bwrap_binary=bwrap_binary,
-            extra_ro_binds=_pi_install_binds(pi_binary),
+        return ResourceCappedSandbox(
+            BwrapSandbox(
+                bwrap_binary=bwrap_binary,
+                extra_ro_binds=_pi_install_binds(pi_binary),
+            ),
+            caps=caps,
         )
 
     if allow_unsandboxed is None:

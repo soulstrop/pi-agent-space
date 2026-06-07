@@ -100,3 +100,21 @@ sudo chmod u+s /usr/bin/bwrap
 If you can do 1.B, do 1.B. The targeted profile is the smallest deviation from the host's default hardening and the only path that's reversible at per-process granularity. 1.A and 1.C exist for environments where 1.B's prerequisites (writable `/etc/apparmor.d/`, working `apparmor_parser`) are not available.
 
 On non-Linux hosts (macOS in particular), none of the above applies — `BwrapSandbox` is Linux-only. The Linux/macOS dev loop divergence is documented in ADR 0009 and is a Reconsider Trigger for a future container-based implementation.
+
+## OS-level resource caps (`systemd-run --scope`)
+
+[ADR 0020](../../adrs/0020-v1-security-scope-and-threat-model.md) D2 adds a hard CPU/memory/task ceiling on the agent: on the real-`pi` path, `select_sandbox()` wraps the bwrap invocation in a `ResourceCappedSandbox`, which runs it inside a transient `systemd-run --scope` cgroup with `MemoryMax=4G`, `CPUQuota=400%`, and `TasksMax=512` by default (operator-configurable via `ResourceCaps`). This bounds a runaway agent — a memory balloon, a busy-loop, a fork-bomb — that the orchestration-layer cost/wallclock caps (ADR 0005/0007) would only catch at the next check.
+
+**Prerequisite (unprivileged operator):** the caps use a **`--user` scope**, which needs a running user systemd manager with delegated cgroup controllers — normal for a desktop login session, but often absent in minimal CI containers or bare `ssh` shells without lingering enabled. The wrap **degrades gracefully**: if `systemd-run` cannot create a scope, the agent still runs (sandboxed by bwrap) but **without** the resource caps, and a one-time `WARNING` is logged:
+
+```
+OS resource caps unenforced: systemd-run cannot create a user scope on this host; the agent runs without MemoryMax/CPUQuota/TasksMax
+```
+
+To confirm the caps can be enforced on your host:
+
+```bash
+systemd-run --user --scope --quiet --collect -p TasksMax=16 -- true && echo "caps enforceable"
+```
+
+Running as `root` (e.g., inside a container) uses a **system** scope automatically — no user manager required. The cap *dimensions* depend on which cgroup v2 controllers are delegated to your slice; `MemoryMax` and `TasksMax` are typically delegated, `CPUQuota` sometimes is not, in which case that one dimension is silently unenforced.

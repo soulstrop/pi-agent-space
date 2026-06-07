@@ -18,8 +18,11 @@ from pi_evaluator.adapters.cli_subprocess_adapter import CliSubprocessAdapter
 from pi_evaluator.adapters.sandbox import (
     BwrapSandbox,
     NullSandbox,
+    ResourceCappedSandbox,
+    ResourceCaps,
     bwrap_available,
     select_sandbox,
+    systemd_run_available,
 )
 from pi_evaluator.domain.test_suite import GraduatedProblem, ValidationStep
 from pi_evaluator.domain.types import Package
@@ -340,9 +343,24 @@ class TestSelectSandbox:
     back to NullSandbox with a loud warning.
     """
 
-    def test_returns_bwrap_when_available(self, monkeypatch):
+    def test_returns_capped_bwrap_when_available(self, monkeypatch):
         monkeypatch.setattr(sandbox_mod, "bwrap_available", lambda *a, **k: True)
-        assert isinstance(select_sandbox(pi_binary="pi"), BwrapSandbox)
+        monkeypatch.setattr(
+            sandbox_mod, "systemd_run_available", lambda *a, **k: True
+        )
+        sb = select_sandbox(pi_binary="pi")
+        assert isinstance(sb, ResourceCappedSandbox)
+        assert isinstance(sb._inner, BwrapSandbox)
+
+    def test_caps_param_flows_to_decorator(self, monkeypatch):
+        monkeypatch.setattr(sandbox_mod, "bwrap_available", lambda *a, **k: True)
+        monkeypatch.setattr(
+            sandbox_mod, "systemd_run_available", lambda *a, **k: True
+        )
+        caps = ResourceCaps(memory_max="1G", cpu_quota=None, tasks_max=64)
+        sb = select_sandbox(pi_binary="pi", caps=caps)
+        assert isinstance(sb, ResourceCappedSandbox)
+        assert sb._caps is caps
 
     def test_raises_when_unavailable_and_no_override(self, monkeypatch):
         monkeypatch.setattr(sandbox_mod, "bwrap_available", lambda *a, **k: False)
@@ -371,3 +389,133 @@ class TestSelectSandbox:
         monkeypatch.setenv("PI_ALLOW_UNSANDBOXED", "1")
         with pytest.raises(RuntimeError):
             select_sandbox(pi_binary="pi", allow_unsandboxed=False)
+
+    def test_unsandboxed_override_is_not_resource_capped(self, monkeypatch):
+        """The explicit no-isolation escape hatch stays a bare NullSandbox —
+        resource caps are tied to the bwrap path (ADR 0020 D2)."""
+        monkeypatch.setattr(sandbox_mod, "bwrap_available", lambda *a, **k: False)
+        monkeypatch.setenv("PI_ALLOW_UNSANDBOXED", "1")
+        sb = select_sandbox(pi_binary="pi")
+        assert isinstance(sb, NullSandbox)
+
+
+# --- ResourceCaps ---------------------------------------------------
+
+
+class TestResourceCaps:
+    def test_default_caps_render_all_three_properties(self):
+        props = ResourceCaps().to_properties()
+        assert props == [
+            "-p", "MemoryMax=4G",
+            "-p", "CPUQuota=400%",
+            "-p", "TasksMax=512",
+        ]
+
+    def test_none_fields_are_omitted(self):
+        props = ResourceCaps(memory_max="2G", cpu_quota=None, tasks_max=None)
+        assert props.to_properties() == ["-p", "MemoryMax=2G"]
+
+    def test_all_none_renders_empty(self):
+        assert ResourceCaps(None, None, None).to_properties() == []
+
+
+# --- ResourceCappedSandbox ------------------------------------------
+
+
+class TestResourceCappedSandbox:
+    def test_satisfies_port(self, monkeypatch):
+        monkeypatch.setattr(
+            sandbox_mod, "systemd_run_available", lambda *a, **k: True
+        )
+        assert isinstance(ResourceCappedSandbox(NullSandbox()), SandboxPort)
+
+    def test_prepends_systemd_run_scope_prefix(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            sandbox_mod, "systemd_run_available", lambda *a, **k: True
+        )
+        sb = ResourceCappedSandbox(
+            NullSandbox(), caps=ResourceCaps(), scope_mode="user"
+        )
+        cmd = sb.wrap(["pi", "--print"], workspace=tmp_path).cmd
+        assert cmd[0] == "systemd-run"
+        assert "--user" in cmd
+        assert "--scope" in cmd
+        assert "MemoryMax=4G" in cmd
+        # the inner (NullSandbox identity) command follows the `--` terminator
+        sep = cmd.index("--")
+        assert cmd[sep + 1 :] == ["pi", "--print"]
+
+    def test_system_scope_mode_omits_user_flag(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            sandbox_mod, "systemd_run_available", lambda *a, **k: True
+        )
+        sb = ResourceCappedSandbox(NullSandbox(), scope_mode="system")
+        cmd = sb.wrap(["pi"], workspace=tmp_path).cmd
+        assert "--user" not in cmd
+        assert cmd[0] == "systemd-run"
+
+    def test_wraps_inner_bwrap_command(self, monkeypatch, tmp_path):
+        """The scope prefix sits *outside* the whole bwrap invocation."""
+        monkeypatch.setattr(
+            sandbox_mod, "systemd_run_available", lambda *a, **k: True
+        )
+        sb = ResourceCappedSandbox(
+            BwrapSandbox(bwrap_binary="/usr/bin/bwrap"), scope_mode="system"
+        )
+        cmd = sb.wrap(["pi"], workspace=tmp_path).cmd
+        assert cmd[0] == "systemd-run"
+        # bwrap appears after the systemd-run `--`, and pi is last
+        assert "/usr/bin/bwrap" in cmd
+        assert cmd.index("systemd-run") < cmd.index("/usr/bin/bwrap")
+        assert cmd[-1] == "pi"
+
+    def test_preserves_cwd_and_env(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            sandbox_mod, "systemd_run_available", lambda *a, **k: True
+        )
+        env = {"PATH": "/usr/bin"}
+        result = ResourceCappedSandbox(NullSandbox()).wrap(
+            ["pi"], workspace=tmp_path, env=env
+        )
+        assert result.cwd == tmp_path
+        assert result.env == env
+
+    def test_degrades_to_inner_when_systemd_run_unavailable(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        monkeypatch.setattr(
+            sandbox_mod, "systemd_run_available", lambda *a, **k: False
+        )
+        with caplog.at_level("WARNING", logger="pi_evaluator"):
+            sb = ResourceCappedSandbox(NullSandbox())
+        cmd = sb.wrap(["pi", "--print"], workspace=tmp_path).cmd
+        assert cmd == ["pi", "--print"]  # unchanged — no scope prefix
+        assert any("unenforced" in r.message for r in caplog.records)
+
+    def test_probe_runs_once_at_construction_not_per_wrap(
+        self, monkeypatch, tmp_path
+    ):
+        calls = {"n": 0}
+
+        def _probe(*a, **k):
+            calls["n"] += 1
+            return True
+
+        monkeypatch.setattr(sandbox_mod, "systemd_run_available", _probe)
+        sb = ResourceCappedSandbox(NullSandbox())
+        sb.wrap(["pi"], workspace=tmp_path)
+        sb.wrap(["pi"], workspace=tmp_path)
+        assert calls["n"] == 1
+
+
+# --- systemd_run_available probe ------------------------------------
+
+
+class TestSystemdRunAvailable:
+    def test_false_when_binary_missing(self, monkeypatch):
+        monkeypatch.setattr(sandbox_mod.shutil, "which", lambda _: None)
+        assert systemd_run_available("systemd-run") is False
+
+    def test_real_probe_returns_bool_without_crashing(self):
+        # host-dependent result; the contract is that the probe never raises
+        assert isinstance(systemd_run_available(scope_mode="user"), bool)
