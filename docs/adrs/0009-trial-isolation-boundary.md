@@ -1,8 +1,11 @@
 # Title: 0009 - Trial Isolation Boundary
 
-**Status:** Proposed
+**Status:** Accepted
 
-*Spike in progress; decision target Phase 3.5.1.*
+*Accepted 2026-06-07. Supersedes the spike that targeted Phase 3.5.1; the
+mechanism (bwrap behind `SandboxPort`) is implemented. Wiring it onto the real
+execution path — and the trust-boundary / isolation-ladder framing added below —
+is tracked under `pi-agent-space-j8x`.*
 
 ## Context
 
@@ -25,6 +28,19 @@ Three distinct concerns were being conflated under "isolation." Naming them sepa
 **3. Resource bounds.** Cost cap enforcement (ADR 0005) is wallclock + token accounting at the optimizer layer. It does not bound CPU, memory, disk, file-descriptor count, or *detached processes* spawned by the agent. A backgrounded process can outlive the trial and continue consuming resources unaccounted-for in the trial's telemetry.
 
 The first concern is the one that pushes this from "hygiene" to "load-bearing." Even if we trusted the LLM completely, measurement integrity demands isolation.
+
+### What the sandbox is — and isn't — trusting
+
+The trust boundary is around the agent's **runtime behavior**, not the harness source. We control Pi's code, but Pi's purpose is to drive an LLM that *generates and executes arbitrary shell and code* against the workspace. The live adversaries are therefore (a) an LLM that misbehaves — a hallucinated `rm -rf $HOME`, a `curl … | sh` — and (b) **prompt-injection through eval content**: a crafted problem statement or fixture file that steers the agent into destruction or credential exfiltration. This is *semi-trusted execution*.
+
+It is explicitly **not** the threat model of "untrusted code actively trying to escape the sandbox via a kernel exploit." In the individual-user R&D deployment scenario (v1's target), the operator and the agent sit on the same side of the trust line — the operator chose to run this on their own machine. That distinction is what sizes the mechanism: *escape-resistance against a hostile guest* is the property that hardware-virtualization (microVM) and userspace-kernel (gVisor) isolation buy, and it is **not** the property v1 needs. Namespace-level confinement of the agent's I/O is.
+
+Two residual risks survive *any* mechanism choice short of a fully air-gapped guest, and are worth naming so they aren't mistakenly attributed to the isolation tier:
+
+* **Network egress.** Pi must reach the model API, so the network cannot be cut. An agent can exfiltrate over an open socket regardless of whether it runs under bwrap, a container, or a microVM. Closing this needs egress *filtering* (allowlist the model endpoint), not a heavier sandbox.
+* **Resource exhaustion.** CPU / memory / fork-bomb bounds come from cgroup limits, which attach orthogonally (`systemd-run --scope -p MemoryMax=…`, or a container's `--memory`/`--pids-limit`) at *any* tier.
+
+Because neither residual is retired by moving to a VM, the marginal cost of a microVM does not buy down the risks that are actually live in v1. That is the core reason the decision lands on the lightweight end of the spectrum rather than at the operator's usual default of a Firecracker/QEMU microVM (which is the right default precisely when the guest *code* is unvetted — a condition that does not hold here).
 
 ### Mechanism families
 
@@ -103,10 +119,17 @@ The same `SandboxPort` shape is satisfied by `docker run -v workspace:workspace 
 * **Pros:** Symmetric dev loop across platforms.
 * **Cons:** `sandbox-exec` is deprecated by Apple (still works, no replacement). Profile language is fiddly and per-host. The semantics aren't quite the same — would need careful test coverage on both. Higher complexity for marginal portability gain in v1.
 
-### Option 7: microVM (Firecracker / gVisor / Kata)
+### Option 7: Syscall-interception (gVisor / `runsc`)
 
-* **Pros:** Strongest isolation available.
-* **Cons:** Overkill for the threat model; high startup cost; ops-heavy. Out of scope for v1.
+A userspace kernel (gVisor's `runsc`) intercepts the guest's syscalls, so the agent never touches the host kernel directly — escape-resistance approaching a VM's without a full guest kernel.
+
+* **Pros:** Strong escape-resistance against a hostile guest while keeping container-style ergonomics (OCI image, cgroup limits). The natural rung *if the guest becomes genuinely untrusted but a shared host kernel is still acceptable*.
+* **Cons:** Escape-resistance is the property v1 does not need (see "What the sandbox is — and isn't — trusting"). Syscall interception imposes a performance tax heaviest on I/O-bound workloads — exactly what a coding agent is — and some syscalls are unimplemented. Linux-only. Out of scope for v1.
+
+### Option 8: microVM (Firecracker / QEMU / Kata)
+
+* **Pros:** Strongest isolation available — a separate guest kernel behind hardware virtualization. The rung for *untrusted, multi-tenant* execution.
+* **Cons:** Overkill for the v1 trust model — it buys escape-resistance v1 does not need, and does **not** retire the two live residual risks (open egress, resource caps), which attach orthogonally at any tier. Highest startup cost and ops floor (guest kernel + rootfs images, virtio-fs / network plumbing); needs nested virt where the host is itself virtualized. Out of scope for v1.
 
 ## Bwrap deployment requirements
 
@@ -167,6 +190,21 @@ Bwrap is chosen over the UID-based and container alternatives for v1 because:
 * **Validation steps are not sandboxed in v1.** Per ADR 0004, graduated-problem validation commands are trusted code from the project's own repo. They run after the trial; they read workspace contents the agent may have written. The risk surface (validation tooling executing agent-authored content — e.g., `pytest` running a test file the agent created) is real but secondary, and isolating validation introduces its own complications (shell semantics across `--bind` views, validation steps that need network or non-workspace paths). Tracked as a follow-up.
 * **Network is preserved.** Pi requires it. A future tightening (egress-only to the model API endpoint) is possible but not v1.
 * **User namespace unsharing is not in the default recipe.** Compatibility with hardened Linux kernels takes priority; the threats this ADR addresses do not require uid-mapping protection.
+
+### The isolation ladder
+
+The mechanism is sized to the trust model and ratchets up *only* as that trust model degrades. Every rung is an adapter-internal swap behind `SandboxPort` — the `AgentHarnessPort` contract, optimizer, and trial runner are untouched at every step.
+
+| Rung | Mechanism | Promote to this rung when… |
+|---|---|---|
+| **0 · NullSandbox** | tmpdir copy only | (default today; preserves Phase 1–3 behavior — no real isolation) |
+| **1 · bwrap** *(v1 choice)* | namespaces + bind mounts + env allowlist | real trials run on a single operator's host; the goal is I/O containment + blast-radius reduction and the guest is *semi-trusted* |
+| **1+ · bwrap + cgroup caps** | rung 1 wrapped in `systemd-run --scope` | runaway resource use must be bounded at the OS, not just by the cost cap (ADR 0005) |
+| **2 · container** (rootless Podman) | namespaces + cgroups + image rootfs | image-pinned reproducibility or first-class resource caps are required, or cross-platform parity is wanted |
+| **3 · gVisor** | userspace kernel (syscall interception) | the guest becomes *genuinely untrusted* but a shared host kernel is still acceptable |
+| **4 · microVM** | hardware virt + separate guest kernel | *untrusted, multi-tenant* execution where host-kernel isolation is required |
+
+Egress filtering and audited resource caps are **cross-cutting** concerns that attach at whichever rung is in force; they are not themselves rungs. The operator's usual "microVM by default" posture corresponds to rung 4 and is the correct default when the guest *code* is unvetted — a condition v1 does not meet, which is why v1 sits at rung 1.
 
 ## Reconsider Triggers
 
