@@ -307,3 +307,22 @@ The scanner does not live behind a port. Outcome-filtering is not a domain opera
 The surrogate still *learns* a subjective head; it is simply not yet a driver of proposal selection. Lifting subjective into the acquisition (via a sparse-frontier strategy, or a separate scalarisation) is a deliberate future step, not an accident of this implementation.
 
 **Related:** [ADR 0014 — Subjective score sidecar](adrs/0014-subjective-score-sidecar.md); `pareto.py` (5D dominance, where subjective participates only when both trials carry a score); issue `pi-agent-space-pwf`.
+
+---
+
+### Logging conventions audit: third-party loggers are siblings, not children (Phase 7 / ADR 0015 commitment 8)
+
+**Where:** `python/src/pi_evaluator/logging_config.py` (`configure_logging` binds `"pi_evaluator"`); the ML stack imported by `surrogate_proposer.py` (`torch`, `botorch`, `gpytorch`, `scipy`).
+
+**Audit finding (commitments 4, 6, 7, 8 of ADR 0015):**
+
+- **C6 (module-level loggers):** holds. Every `logging.getLogger(__name__)` is module-level (`optimizer_driver.py`, `per_trial_directory_adapter.py`, `tolerant_read.py`). The `getLogger("pi_evaluator")` calls inside `configure_logging` configure the root of our hierarchy — they don't instantiate per-call emitting loggers, so they're not the antipattern C6 forbids.
+- **C7 (no propagate overrides):** holds. No `logger.propagate = False` anywhere in `src/`. The only `propagate` matches are doc comments.
+- **C4 (`logger.exception()` in except blocks):** the one except block that logs (`_check_schema_version` catching `(ValueError, IndexError)` from version parsing) is a **benign, fully-anticipated branch** — a malformed version string, read best-effort with a WARNING. `logger.exception()` would escalate it to ERROR and attach an irrelevant traceback, which is semantically wrong. C4 targets genuine failure paths; there are none that log in `src/`. Left as a documented exception to the literal reading.
+- **C8 (third-party logger audit):** third-party loggers (`torch.*`, `botorch`) live under the **root** logger, as *siblings* of `pi_evaluator`, not children. So `configure_logging("pi_evaluator")` deliberately does **not** capture them — by design for v1. Specifics: `botorch` sets itself to **CRITICAL** with `propagate=False` and its own `StreamHandler` (self-contained, effectively silent). `torch.*` defaults to WARNING; some submodules install their own handlers (`propagate=False`), the rest propagate to the bare root (no handler → `logging.lastResort` → stderr). `gpytorch`/`scipy`/`linear_operator` register **no** loggers at all.
+
+**Key distinction:** the numerical noise seen during tests (`InputDataWarning`, `NumericsWarning`) is **`warnings.warn`**, a different channel from `logging` — it never flows through `configure_logging`. It is mitigated at the source (prefer `qLogExpectedHypervolumeImprovement`, standardize inputs) and is orthogonal to the logging layer.
+
+**Decision:** do not attach our handlers to the root logger in v1 — capturing the entire third-party logging surface is a non-goal and would pollute the JSON stream. If an operator later wants third-party WARNINGs in the structured stream, the seam is to attach the `QueueHandler` to `logging.getLogger()` (root) rather than `"pi_evaluator"`; deferred until a concrete need (e.g. the enterprise deployment scenario).
+
+**Related:** [ADR 0015 — Structured logging depth](adrs/0015-structured-logging-depth.md) (commitments 4/6/7/8); issue `pi-agent-space-ent`; bd memory `botorch-partitioning-constraints` (the numerical-warning mitigations).
