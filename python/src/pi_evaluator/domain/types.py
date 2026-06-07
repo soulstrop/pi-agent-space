@@ -140,6 +140,43 @@ RunEvent = Event
 
 
 @dataclass(frozen=True)
+class SpanStats:
+    """Aggregate timing for a named phase span (S007, ADR 0022).
+
+    ``count`` spans contributing ``total_ms`` of wall time; ``mean_ms`` is the
+    derived per-span average. Milliseconds because phase spans (a harness call,
+    a scoring pass) are sub-second to seconds — finer than the trial wallclock.
+    """
+
+    count: int
+    total_ms: float
+    mean_ms: float
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """Operational metrics for one optimizer run (S007, ADR 0022).
+
+    The derived observability aggregate persisted as ``run_summary.json`` in the
+    run directory (ADR 0013 layout). Distinct from ``final.json`` (per-trial
+    *capability* metrics): this counts trials by outcome and times the run, the
+    signal an operator wants for an unattended overnight run (ADR 0007).
+    ``spans`` carries the per-phase tracing pillar keyed by span name.
+    """
+
+    run_id: str
+    halted_reason: str
+    trials_total: int
+    trials_completed: int
+    trials_boundary_violation: int
+    trials_error_escalated: int
+    total_cost_dollars: float
+    wallclock_seconds: float
+    trials_per_minute: float
+    spans: dict[str, SpanStats] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class RunConfig:
     """Immutable configuration snapshot written to run_config.json (ADR 0013).
 

@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..domain.redaction import redact_json
+from ..domain.run_paths import run_dir
 from ..domain.tolerant_read import tolerant
 from ..domain.types import (
     EvalSuiteRef,
@@ -263,7 +264,7 @@ class PerTrialDirectoryAdapter(PersistencePort):
     # ------------------------------------------------------------------
 
     def _run_dir(self, run_id: str) -> Path:
-        return self._base / "runs" / run_id
+        return run_dir(self._base, run_id)
 
     def create_run(self, run_id: str, config: RunConfig) -> None:
         d = self._run_dir(run_id)
