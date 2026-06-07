@@ -1,8 +1,6 @@
 # Title: 0015 - Structured Logging Depth
 
-**Status:** Proposed
-
-*Spike in progress; must-decide items gate production-grade logging.*
+**Status:** Accepted
 
 ## Context
 
@@ -164,16 +162,35 @@ values (e.g. a `model` string that happens to start with a key-like prefix).
 
 ## Decision
 
-*TBD — spike in progress.*
+The eight commitments above are binding. The six must-decide items resolve to
+their context-indicated directions:
 
-Likely directions based on context:
-
-- MD1: keep stdlib; `structlog` adds dependency weight not yet justified.
-- MD2: MD2-B (stdout + experiment-directory file) — consistent with ADR 0013.
-- MD3: MD3-A (contextvars + Filter) — cleanest for the unattended run model.
-- MD4: MD4-A (snake_case) — already committed by existing payloads.
-- MD5: MD5-A (env var) — simplest operator surface.
-- MD6: MD6-A for v1 (call-site discipline); revisit for enterprise scenario.
+- **MD1 — Framework: MD1-A (keep stdlib `logging` + `JsonFormatter`).** No async
+  surface yet; `contextvars` + a logging `Filter` (MD3) covers context binding
+  without a `structlog` dependency. The Phase 6 reconsider-trigger was checked at
+  acceptance — `torch`/`botorch` emit via stdlib `logging`, so a `structlog`
+  bridge would add cost without simplifying anything today.
+- **MD2 — Transport: MD2-B (stdout/stderr + `<base>/run.log`).** Consistent with
+  ADR 0013's run-directory durability; `configure_logging(log_file=...)` already
+  supports it. Tests stub or tolerate the file side effect.
+- **MD3 — Correlation: MD3-A (`contextvars.ContextVar` read by a logging
+  `Filter`).** `run_id`/`trial_id` are set once per run/trial and stamped onto
+  every record; thread- and `asyncio`-safe, zero per-call-site cost. Realises
+  commitment 1.
+- **MD4 — Naming: MD4-A (snake_case).** Matches every existing event-payload and
+  persisted field name.
+- **MD5 — Level policy: MD5-A (`INFO` default; `DEBUG` via `LOG_LEVEL` env).**
+  `configure_logging` reads `os.environ.get("LOG_LEVEL", "INFO")`. Simplest
+  operator surface; per-module granularity remains available via the stdlib
+  hierarchy.
+- **MD6 — PII scrubbing: MD6-A (call-site discipline) for v1.** Structured
+  `extra` fields carry identifiers, counts, and costs — never raw
+  `system_prompt`, `template_values`, or key values; enforced in code review. The
+  stronger field-allowlist (MD6-B) is **deferred** as a triggered follow-up
+  gated on the enterprise deployment scenario, tracked together with the raw
+  event-stream redaction concern (`pi-agent-space-28g`) so the redaction question
+  lives in one place. Note MD6 governs the *logging* layer only; `events.jsonl`
+  redaction (28g) is a separate persistence concern.
 
 ## Reconsider Triggers
 
@@ -190,4 +207,21 @@ Likely directions based on context:
 
 ## Consequences
 
-*TBD — to be filled when the spike closes.*
+- A `RunContext` (module-level `ContextVar`s for `run_id`/`trial_id`) and a
+  `Filter` that stamps them onto every record join `logging_config.py`;
+  `OptimizerDriver`/`TrialRunner` set the context at run/trial boundaries instead
+  of threading IDs through `extra`. The seam-level info logs already emitted by
+  the tolerant reader (ADR 0019) and schema-version check gain `run_id`/`trial_id`
+  for free once a run is in scope.
+- `configure_logging` routes records through a `QueueHandler` + `QueueListener`
+  (commitment 5) and reads `LOG_LEVEL` (MD5-A); it keeps the stdout handler and
+  the optional `<base>/run.log` file handler (MD2-B).
+- A codebase pass enforces the conventions: `logger.exception()` in logging
+  `except` blocks (commitment 4), module-level loggers only (6), no `propagate`
+  overrides (7), and a third-party logger audit covering
+  `torch`/`botorch`/`gpytorch`/`scipy` (commitment 8) — which currently surface
+  numerical warnings during tests.
+- `structlog` is **not** taken as a dependency; the lean-dependency posture
+  (only `torch`/`botorch` from ADR 0016) holds.
+- Implementation is tracked under `pi-agent-space-ent`; the deferred MD6-B
+  allowlist is its own follow-up.
