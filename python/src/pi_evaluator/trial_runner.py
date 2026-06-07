@@ -6,6 +6,7 @@ import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from .adapters.observability import NullObservability
 from .domain.event_payloads import (
     BoundaryViolation,
     Configured,
@@ -28,6 +29,7 @@ from .domain.types import (
 from .lifecycle import classify_outcome
 from .ports.agent_harness_port import AgentHarnessPort
 from .ports.eval_suite_source_port import EvalSuiteSourcePort
+from .ports.observability_port import ObservabilityPort
 from .ports.persistence_port import PersistencePort
 from .ports.scoring_port import ScoringPort
 
@@ -60,12 +62,16 @@ class TrialRunner:
         persistence: PersistencePort,
         suite_source: EvalSuiteSourcePort,
         clock: Callable[[], str] = _default_clock,
+        observability: ObservabilityPort | None = None,
     ) -> None:
         self._harness = harness
         self._scorer = scorer
         self._persistence = persistence
         self._suite_source = suite_source
         self._clock = clock
+        # Null-object default keeps the tracing seam call-unconditional; an
+        # in-process or OTel adapter is injected at the composition root.
+        self._obs = observability or NullObservability()
 
     def run_trial(
         self,
@@ -101,7 +107,10 @@ class TrialRunner:
         warning_emitted = False
         for problem in problems:
             try:
-                telemetry = self._harness.run(package, problem, problem.workspace_dir)
+                with self._obs.span("harness.run"):
+                    telemetry = self._harness.run(
+                        package, problem, problem.workspace_dir
+                    )
             except subprocess.TimeoutExpired as exc:
                 self._emit(
                     trial,
@@ -118,7 +127,8 @@ class TrialRunner:
                     ),
                 )
                 break
-            metrics = self._scorer.score_objective(telemetry)
+            with self._obs.span("scorer.score_objective"):
+                metrics = self._scorer.score_objective(telemetry)
             per_problem_metrics.append(metrics)
             per_problem_telemetry.append(telemetry)
             cumulative_cost += metrics.cost_dollars

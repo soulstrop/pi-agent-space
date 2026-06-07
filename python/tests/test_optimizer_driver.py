@@ -123,6 +123,7 @@ def _driver(
     id_factory=None,
     per_trial_cost_cap_usd: float | None = None,
     per_run_cost_cap_usd: float | None = None,
+    observability=None,
 ) -> tuple[OptimizerDriver, PerTrialDirectoryAdapter]:
     if metrics_by_model is None:
         metrics_by_model = {
@@ -137,6 +138,7 @@ def _driver(
         scorer=SyntheticSuiteScorer(),
         persistence=persistence,
         suite_source=_OneProblemSuite(workspace),
+        observability=observability,
     )
     proposer = RandomFromSlotSpace(
         slot_space=_slot_space(),
@@ -154,6 +156,7 @@ def _driver(
         trial_id_factory=factory,
         per_trial_cost_cap_usd=per_trial_cost_cap_usd,
         per_run_cost_cap_usd=per_run_cost_cap_usd,
+        observability=observability,
     )
     return driver, persistence
 
@@ -690,3 +693,38 @@ def test_driver_with_surrogate_proposer_completes_three_trial_run(tmp_path):
     assert all(t.outcome == "completed" for t in result.trials)
     # All three distinct packages were proposed (no repeats).
     assert len({t.package.model for t in result.trials}) == 3
+
+
+def test_driver_emits_run_summary_with_observability(tmp_path: Path) -> None:
+    """End-to-end: an injected InProcessObservability counts trial outcomes,
+    times phases, and persists run_summary.json in the run directory (ADR 0022)."""
+    from pi_evaluator.adapters.observability import InProcessObservability
+    from pi_evaluator.domain.run_paths import run_dir
+
+    trial_dir = tmp_path / "trials"
+    obs = InProcessObservability(base_dir=trial_dir)
+    driver, _ = _driver(tmp_path, trial_dir=trial_dir, observability=obs)
+
+    result = driver.run(trial_budget=2)
+
+    summary_path = run_dir(trial_dir, result.run_id) / "run_summary.json"
+    assert summary_path.exists()
+    summary = json.loads(summary_path.read_text())
+    assert summary["run_id"] == result.run_id
+    assert summary["trials_total"] == 2
+    assert summary["trials_completed"] == 2
+    assert summary["total_cost_dollars"] > 0.0
+    # Tracing pillar: both runner-level and driver-level spans aggregated.
+    assert summary["spans"]["trial"]["count"] == 2
+    assert summary["spans"]["harness.run"]["count"] == 2
+    assert summary["spans"]["scorer.score_objective"]["count"] == 2
+
+
+def test_driver_without_observability_writes_no_summary(tmp_path: Path) -> None:
+    """Null default: the existing run path is unchanged when no obs is wired."""
+    from pi_evaluator.domain.run_paths import run_dir
+
+    trial_dir = tmp_path / "trials"
+    driver, _ = _driver(tmp_path, trial_dir=trial_dir)
+    result = driver.run(trial_budget=1)
+    assert not (run_dir(trial_dir, result.run_id) / "run_summary.json").exists()

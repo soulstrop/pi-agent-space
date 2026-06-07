@@ -40,9 +40,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 
+from .adapters.observability import NullObservability
 from .domain.pareto import add_to_frontier, pareto_frontier
 from .domain.types import EvalSuiteRef, RunConfig, RunEvent, Trial, VersionVector
 from .logging_config import log_context
+from .ports.observability_port import ObservabilityPort
 from .ports.package_proposer_port import PackageProposerPort
 from .ports.persistence_port import PersistencePort
 from .trial_runner import COST_CAP_WARNING_FRACTION, TrialRunner
@@ -89,6 +91,7 @@ class OptimizerDriver:
         retry_budget: int = 2,
         trial_id_factory: Callable[[], str] = _default_trial_id_factory,
         monotonic_clock: Callable[[], float] = time.monotonic,
+        observability: ObservabilityPort | None = None,
     ) -> None:
         if replicates != 1:
             raise NotImplementedError(
@@ -109,6 +112,10 @@ class OptimizerDriver:
         self._retry_budget = retry_budget
         self._trial_id_factory = trial_id_factory
         self._monotonic_clock = monotonic_clock
+        # Shares one instance with the injected TrialRunner so trial-span
+        # (here) and phase-span (runner) timings aggregate together. Null
+        # default keeps observability opt-in (ADR 0022).
+        self._obs = observability or NullObservability()
 
     def run(self, trial_budget: int) -> OptimizerResult:
         run_id = str(uuid.uuid4())
@@ -139,7 +146,11 @@ class OptimizerDriver:
         halted_reason = "budget"
         run_warning_emitted = False
         consecutive_errors = 0
-        last_completed_at = self._monotonic_clock()
+        run_started_at = self._monotonic_clock()
+        last_completed_at = run_started_at
+        # Most recent monotonic reading, reused for the run wallclock so
+        # finish_run needs no extra clock tick (keeps scripted test clocks exact).
+        last_tick = run_started_at
 
         # Initial frontier from history
         frontier = pareto_frontier(history)
@@ -152,7 +163,7 @@ class OptimizerDriver:
 
             trial_id = self._trial_id_factory()
             self._persistence.record_trial_dispatched(run_id, trial_id)
-            with log_context(trial_id=trial_id):
+            with log_context(trial_id=trial_id), self._obs.span("trial"):
                 trial = self._runner.run_trial(
                     trial_id=trial_id,
                     run_id=run_id,
@@ -164,12 +175,17 @@ class OptimizerDriver:
             assert trial.outcome is not None  # run_trial always sets outcome
             self._persistence.record_trial_closed(run_id, trial_id, trial.outcome)
             new_trials.append(trial)
+            self._obs.increment("trials.total")
+            self._obs.increment(f"trials.{trial.outcome}")
+            if trial.final_metrics is not None:
+                self._obs.record("cost.dollars", trial.final_metrics.cost_dollars)
 
             # Incremental update: O(F) per trial where F is frontier size
             frontier = add_to_frontier(frontier, trial)
             self._persistence.save_frontier([t.trial_id for t in frontier])
 
             now = self._monotonic_clock()
+            last_tick = now
             if trial.outcome == "completed":
                 consecutive_errors = 0
                 last_completed_at = now
@@ -238,6 +254,11 @@ class OptimizerDriver:
                 payload={"halted_reason": halted_reason},
             ),
         )
+        # Finalize observability: build/persist run_summary.json and emit the
+        # structured run_summary log event. The driver owns the authoritative
+        # wallclock (its monotonic clock); the obs adapter owns aggregation.
+        wallclock = last_tick - run_started_at
+        self._obs.finish_run(run_id, halted_reason, wallclock)
         return OptimizerResult(
             run_id=run_id,
             trials=new_trials,
