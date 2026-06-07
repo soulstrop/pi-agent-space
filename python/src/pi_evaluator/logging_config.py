@@ -22,10 +22,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import queue
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
+from logging.handlers import QueueHandler, QueueListener
 from pathlib import Path
 
 # Standard LogRecord attributes that are never treated as structured fields.
@@ -111,28 +114,76 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(entry, default=str, sort_keys=True)
 
 
+# MD5-A: INFO by default; DEBUG (or any standard level name) via the LOG_LEVEL
+# environment variable. Unrecognised names fall back to INFO rather than failing.
+def _level_from_env() -> int:
+    name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    return logging.getLevelNamesMapping().get(name, logging.INFO)
+
+
+# Commitment 5: the listener owns the formatting/I/O handlers and runs in a
+# background thread. Module-level so configure_logging is idempotent (a prior
+# listener is stopped before a new one starts) and shutdown_logging can flush it.
+_listener: QueueListener | None = None
+
+
 def configure_logging(
-    level: int = logging.INFO,
+    level: int | None = None,
     log_file: Path | None = None,
 ) -> None:
-    """Attach JsonFormatter handlers to the pi_evaluator logger.
+    """Route the pi_evaluator logger through a background QueueListener.
 
-    Writes to stderr always. Writes to ``log_file`` additionally when
-    provided — intended for run-level durability (e.g. ``<base>/run.log``).
-    Call once at the application entry point.
+    A non-blocking ``QueueHandler`` on the root pushes records onto a queue; a
+    ``QueueListener`` formats and writes them on a background thread (commitment
+    5), so log I/O never delays trial timing. Writes JSON to stderr always, and
+    to ``log_file`` additionally when provided (MD2-B, ``<base>/run.log``).
+
+    ``level`` defaults to ``LOG_LEVEL`` from the environment (MD5-A), or ``INFO``.
+    Call once at the application entry point; repeat calls reconfigure cleanly.
     """
+    global _listener
+
     root = logging.getLogger("pi_evaluator")
-    root.setLevel(level)
+    # Reconfigure cleanly: drain any prior listener and drop its queue handler,
+    # so repeated calls (notably in tests) don't leak threads or duplicate output.
+    shutdown_logging()
+    for handler in list(root.handlers):
+        if not isinstance(handler, logging.NullHandler):
+            root.removeHandler(handler)
 
-    context_filter = ContextFilter()
+    root.setLevel(level if level is not None else _level_from_env())
 
+    # Target handlers run inside the listener thread.
+    targets: list[logging.Handler] = []
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(JsonFormatter())
-    stream_handler.addFilter(context_filter)
-    root.addHandler(stream_handler)
+    targets.append(stream_handler)
 
     if log_file is not None:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(JsonFormatter())
-        file_handler.addFilter(context_filter)
-        root.addHandler(file_handler)
+        targets.append(file_handler)
+
+    # ContextFilter sits on the QueueHandler (the emitting side) so correlation
+    # IDs are read in the caller's context, not the listener's worker thread.
+    log_queue: queue.Queue[logging.LogRecord] = queue.Queue()
+    queue_handler = QueueHandler(log_queue)
+    queue_handler.addFilter(ContextFilter())
+    root.addHandler(queue_handler)
+
+    _listener = QueueListener(log_queue, *targets, respect_handler_level=False)
+    _listener.start()
+
+
+def shutdown_logging() -> None:
+    """Stop the background QueueListener, draining queued records first.
+
+    Safe to call when nothing is configured. ``QueueListener.stop`` enqueues a
+    sentinel and joins the worker thread, so all pending records are flushed to
+    their handlers before this returns — making log output deterministic in
+    tests and clean at process exit.
+    """
+    global _listener
+    if _listener is not None:
+        _listener.stop()
+        _listener = None

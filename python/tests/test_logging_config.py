@@ -5,8 +5,17 @@ from __future__ import annotations
 import json
 import logging
 import re
+from logging.handlers import QueueHandler
 
-from pi_evaluator.logging_config import ContextFilter, JsonFormatter, log_context
+import pytest
+
+from pi_evaluator.logging_config import (
+    ContextFilter,
+    JsonFormatter,
+    configure_logging,
+    log_context,
+    shutdown_logging,
+)
 
 
 def _format(
@@ -155,3 +164,74 @@ class TestContextBinding:
         result = json.loads(JsonFormatter().format(rec))
         assert result["run_id"] == "r9"
         assert result["trial_id"] == "t9"
+
+
+@pytest.fixture
+def _logging_teardown():
+    """Restore the pi_evaluator logger to its import-time state after each test."""
+    yield
+    shutdown_logging()
+    root = logging.getLogger("pi_evaluator")
+    for h in list(root.handlers):
+        if not isinstance(h, logging.NullHandler):
+            root.removeHandler(h)
+
+
+class TestConfigureLogging:
+    """Commitment 5 (QueueHandler isolation) + MD5-A (LOG_LEVEL env)."""
+
+    def test_root_routes_through_queue_handler(self, _logging_teardown):
+        configure_logging()
+        root = logging.getLogger("pi_evaluator")
+        non_null = [h for h in root.handlers if not isinstance(h, logging.NullHandler)]
+        assert len(non_null) == 1
+        assert isinstance(non_null[0], QueueHandler)
+
+    def test_context_filter_on_queue_handler(self, _logging_teardown):
+        configure_logging()
+        root = logging.getLogger("pi_evaluator")
+        qh = next(h for h in root.handlers if isinstance(h, QueueHandler))
+        assert any(isinstance(f, ContextFilter) for f in qh.filters)
+
+    def test_log_level_env_default(self, monkeypatch, _logging_teardown):
+        monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+        configure_logging()
+        assert logging.getLogger("pi_evaluator").level == logging.DEBUG
+
+    def test_default_level_is_info(self, monkeypatch, _logging_teardown):
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        configure_logging()
+        assert logging.getLogger("pi_evaluator").level == logging.INFO
+
+    def test_explicit_level_overrides_env(self, monkeypatch, _logging_teardown):
+        monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+        configure_logging(level=logging.WARNING)
+        assert logging.getLogger("pi_evaluator").level == logging.WARNING
+
+    def test_unknown_log_level_falls_back_to_info(self, monkeypatch, _logging_teardown):
+        monkeypatch.setenv("LOG_LEVEL", "NONSENSE")
+        configure_logging()
+        assert logging.getLogger("pi_evaluator").level == logging.INFO
+
+    def test_idempotent_no_handler_leak(self, _logging_teardown):
+        configure_logging()
+        configure_logging()
+        root = logging.getLogger("pi_evaluator")
+        non_null = [h for h in root.handlers if not isinstance(h, logging.NullHandler)]
+        assert len(non_null) == 1
+
+    def test_records_reach_file_with_context_ids(self, tmp_path, _logging_teardown):
+        log_file = tmp_path / "run.log"
+        configure_logging(log_file=log_file)
+        logger = logging.getLogger("pi_evaluator.test")
+        with log_context(run_id="rX", trial_id="tX"):
+            logger.info("hello", extra={"event": "probe"})
+        # stop() drains the queue and joins the listener thread (flush).
+        shutdown_logging()
+        lines = [
+            json.loads(ln) for ln in log_file.read_text().splitlines() if ln.strip()
+        ]
+        probe = next(r for r in lines if r.get("event") == "probe")
+        assert probe["run_id"] == "rX"
+        assert probe["trial_id"] == "tX"
+        assert probe["message"] == "hello"
