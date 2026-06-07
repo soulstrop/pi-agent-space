@@ -21,6 +21,7 @@ the extension surface is wired in.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
@@ -86,13 +87,18 @@ class SlotSpace:
         )
 
     def iter_packages(self) -> Iterator[Package]:
-        for m in self.models:
-            for sk in self.skills_variants:
-                for sp in self.system_prompts:
-                    for tv in self.template_value_variants:
-                        yield Package(
-                            model=m.value,
-                            skills=list(sk.value),
-                            system_prompt=sp.value,
-                            template_values=dict(tv.value),
-                        )
+        # itertools.product yields tuples in the same order as the equivalent
+        # nested loops (leftmost slot varies slowest), so the enumeration order
+        # — relied on by the proposer and tests — is unchanged.
+        for m, sk, sp, tv in itertools.product(
+            self.models,
+            self.skills_variants,
+            self.system_prompts,
+            self.template_value_variants,
+        ):
+            yield Package(
+                model=m.value,
+                skills=list(sk.value),
+                system_prompt=sp.value,
+                template_values=dict(tv.value),
+            )
