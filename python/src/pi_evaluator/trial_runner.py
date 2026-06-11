@@ -33,13 +33,6 @@ from .ports.observability_port import ObservabilityPort
 from .ports.persistence_port import PersistencePort
 from .ports.scoring_port import ScoringPort
 
-COST_CAP_WARNING_FRACTION = 0.8
-"""ADR 0005 soft-warning threshold expressed as a fraction of the hard cap.
-
-A fixed v1 constant rather than a per-call parameter — keeps the cap
-API one-knob. Reconsider when operators ask for asymmetric warning /
-hard-stop bands (e.g., warn at 50%, halt at 100%)."""
-
 
 def _default_clock() -> str:
     return datetime.now(UTC).isoformat()
@@ -63,12 +56,16 @@ class TrialRunner:
         suite_source: EvalSuiteSourcePort,
         clock: Callable[[], str] = _default_clock,
         observability: ObservabilityPort | None = None,
+        cost_cap_warning_fraction: float = 0.8,
     ) -> None:
         self._harness = harness
         self._scorer = scorer
         self._persistence = persistence
         self._suite_source = suite_source
         self._clock = clock
+        # ADR 0005 soft-warning threshold as a fraction of the hard cap; a
+        # single symmetric knob sourced from the config registry (ADR 0023).
+        self._cost_cap_warning_fraction = cost_cap_warning_fraction
         # Null-object default keeps the tracing seam call-unconditional; an
         # in-process or OTel adapter is injected at the composition root.
         self._obs = observability or NullObservability()
@@ -166,7 +163,7 @@ class TrialRunner:
 
             if per_trial_cost_cap_usd is not None:
                 warning_threshold = (
-                    per_trial_cost_cap_usd * COST_CAP_WARNING_FRACTION
+                    per_trial_cost_cap_usd * self._cost_cap_warning_fraction
                 )
                 if not warning_emitted and cumulative_cost > warning_threshold:
                     self._emit(
@@ -179,7 +176,7 @@ class TrialRunner:
                                     scope="per_trial",
                                     cap_usd=per_trial_cost_cap_usd,
                                     cumulative_cost_dollars=cumulative_cost,
-                                    fraction=COST_CAP_WARNING_FRACTION,
+                                    fraction=self._cost_cap_warning_fraction,
                                 )
                             ),
                         ),

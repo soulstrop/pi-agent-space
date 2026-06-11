@@ -10,7 +10,7 @@ Per ADR 0007 B1, the adapter retries on transient error signals
 ``stopReason == "error"``) against the **same materialized workspace**.
 Retry budget defaults to 2 (3 total attempts: 1 initial + 2 retries),
 with exponential backoff at 30s / 60s, each wait scaled by uniform
-jitter (``RETRY_JITTER_RANGE``) to avoid thundering-herd
+jitter (``retry_jitter_range``) to avoid thundering-herd
 synchronization across concurrent evaluators. Persistent errors after the
 budget exhausts return the last attempt's telemetry verbatim, leaving
 ``lifecycle.classify_outcome`` (ADR 0011) to escalate the trial.
@@ -43,29 +43,26 @@ from ..ports.sandbox_port import SandboxPort
 from .sandbox import NullSandbox
 from .workspace import materialize_workspace
 
-DEFAULT_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (30.0, 60.0)
-"""Backoff schedule for ADR 0007 B1's adapter-layer retries.
-
-Index ``i`` is the wait before retry ``i+1``. If the schedule is
-shorter than the retry budget, the last entry is reused for further
-retries."""
-
-RETRY_JITTER_RANGE: tuple[float, float] = (0.5, 1.5)
-"""Multiplicative jitter applied to each backoff wait.
-
-Each scheduled backoff is scaled by a factor drawn uniformly from this
-range before sleeping, so multiple evaluators that hit the same
-transient upstream error don't retry in lockstep (thundering herd)."""
-
 
 class CliSubprocessAdapter(AgentHarnessPort):
-    """Spawn Pi as a subprocess; parse the JSON event stream off stdout."""
+    """Spawn Pi as a subprocess; parse the JSON event stream off stdout.
+
+    ``retry_budget`` / ``backoff_seconds`` / ``retry_jitter_range`` implement
+    ADR 0007 B1's adapter-layer retries; their defaults mirror the config
+    registry (ADR 0023) and are wired from ``Settings`` at the composition root.
+    The backoff schedule's index ``i`` is the wait before retry ``i+1`` (the
+    last entry is reused if the schedule is shorter than the budget); the jitter
+    factor is drawn uniformly from ``retry_jitter_range`` and multiplied into
+    each wait so evaluators hitting the same transient error don't retry in
+    lockstep (thundering herd).
+    """
 
     def __init__(
         self,
         pi_binary: str = "pi",
         retry_budget: int = 2,
-        backoff_seconds: tuple[float, ...] = DEFAULT_RETRY_BACKOFF_SECONDS,
+        backoff_seconds: tuple[float, ...] = (30.0, 60.0),
+        retry_jitter_range: tuple[float, float] = (0.5, 1.5),
         sleep: Callable[[float], None] = time.sleep,
         random_uniform: Callable[[float, float], float] = random.uniform,
         sandbox: SandboxPort | None = None,
@@ -74,6 +71,7 @@ class CliSubprocessAdapter(AgentHarnessPort):
         self._pi = pi_binary
         self._retry_budget = retry_budget
         self._backoff_seconds = backoff_seconds
+        self._retry_jitter_range = retry_jitter_range
         self._sleep = sleep
         self._random_uniform = random_uniform
         self._sandbox: SandboxPort = sandbox if sandbox is not None else NullSandbox()
@@ -90,7 +88,7 @@ class CliSubprocessAdapter(AgentHarnessPort):
         for attempt in range(self._retry_budget + 1):
             if attempt > 0:
                 idx = min(attempt - 1, len(self._backoff_seconds) - 1)
-                jitter = self._random_uniform(*RETRY_JITTER_RANGE)
+                jitter = self._random_uniform(*self._retry_jitter_range)
                 self._sleep(self._backoff_seconds[idx] * jitter)
             telemetry = self._run_once(package, problem, materialized)
             last_telemetry = telemetry

@@ -54,7 +54,7 @@ from .logging_config import log_context
 from .ports.observability_port import ObservabilityPort
 from .ports.package_proposer_port import PackageProposerPort
 from .ports.persistence_port import PersistencePort
-from .trial_runner import COST_CAP_WARNING_FRACTION, TrialRunner
+from .trial_runner import TrialRunner
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,7 @@ class OptimizerDriver:
         max_time_without_completed_trial: timedelta | None = None,
         # v1: declarative only; configure on CliSubprocessAdapter instead.
         retry_budget: int = 2,
+        cost_cap_warning_fraction: float = 0.8,
         trial_id_factory: Callable[[], str] = _default_trial_id_factory,
         monotonic_clock: Callable[[], float] = time.monotonic,
         observability: ObservabilityPort | None = None,
@@ -115,6 +116,7 @@ class OptimizerDriver:
         self._max_consecutive_errors = max_consecutive_errors
         self._max_time_without_completed_trial = max_time_without_completed_trial
         self._retry_budget = retry_budget
+        self._cost_cap_warning_fraction = cost_cap_warning_fraction
         self._trial_id_factory = trial_id_factory
         self._monotonic_clock = monotonic_clock
         # Shares one instance with the injected TrialRunner so trial-span
@@ -218,7 +220,7 @@ class OptimizerDriver:
                     if t.final_metrics is not None
                 )
                 warning_threshold = (
-                    self._per_run_cost_cap_usd * COST_CAP_WARNING_FRACTION
+                    self._per_run_cost_cap_usd * self._cost_cap_warning_fraction
                 )
                 if (
                     not run_warning_emitted
@@ -231,7 +233,7 @@ class OptimizerDriver:
                             "run_id": run_id,
                             "cumulative_cost_dollars": round(cumulative, 6),
                             "cap_usd": self._per_run_cost_cap_usd,
-                            "threshold_fraction": COST_CAP_WARNING_FRACTION,
+                            "threshold_fraction": self._cost_cap_warning_fraction,
                         },
                     )
                     self._persistence.append_run_event(
@@ -242,7 +244,7 @@ class OptimizerDriver:
                             payload={
                                 "cumulative_cost_dollars": round(cumulative, 6),
                                 "cap_usd": self._per_run_cost_cap_usd,
-                                "threshold_fraction": COST_CAP_WARNING_FRACTION,
+                                "threshold_fraction": self._cost_cap_warning_fraction,
                             },
                         ),
                     )

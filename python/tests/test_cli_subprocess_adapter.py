@@ -9,13 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from pi_evaluator.adapters.cli_subprocess_adapter import (
-    RETRY_JITTER_RANGE,
-    CliSubprocessAdapter,
-)
+from pi_evaluator.adapters.cli_subprocess_adapter import CliSubprocessAdapter
+from pi_evaluator.config import Settings
 from pi_evaluator.domain.test_suite import GraduatedProblem, ValidationStep
 from pi_evaluator.domain.types import Package, RawTelemetry
 from pi_evaluator.ports.agent_harness_port import AgentHarnessPort
+
+# The adapter's default jitter range is sourced from the config registry
+# default (ADR 0023); the drift guard in test_config.py ties the two together.
+_DEFAULT_JITTER_RANGE = Settings().retry_jitter_range
 
 
 def _make_mock_pi(
@@ -390,7 +392,7 @@ def test_backoff_schedule_passed_to_sleep(tmp_path):
 
 def test_backoff_applies_jitter(tmp_path):
     """Each backoff is multiplied by a jitter factor drawn from
-    RETRY_JITTER_RANGE, so concurrent evaluators hitting the same
+    retry_jitter_range, so concurrent evaluators hitting the same
     transient upstream error do not retry in lockstep (thundering herd)."""
     src = _src_workspace(tmp_path)
     pi = _make_counting_mock_pi(
@@ -412,8 +414,11 @@ def test_backoff_applies_jitter(tmp_path):
         random_uniform=fake_uniform,
     )
     adapter.run(_package(), _problem(src), workspace=str(src))
-    assert seen_ranges == [RETRY_JITTER_RANGE, RETRY_JITTER_RANGE]
-    assert sleeps == [10.0 * RETRY_JITTER_RANGE[1], 20.0 * RETRY_JITTER_RANGE[1]]
+    assert seen_ranges == [_DEFAULT_JITTER_RANGE, _DEFAULT_JITTER_RANGE]
+    assert sleeps == [
+        10.0 * _DEFAULT_JITTER_RANGE[1],
+        20.0 * _DEFAULT_JITTER_RANGE[1],
+    ]
 
 
 def test_default_jitter_stays_within_range(tmp_path):
@@ -424,7 +429,7 @@ def test_default_jitter_stays_within_range(tmp_path):
         tmp_path,
         attempts=[{"exit_code": 1, "stdout_lines": []}] * 3,
     )
-    lo, hi = RETRY_JITTER_RANGE
+    lo, hi = _DEFAULT_JITTER_RANGE
     for _ in range(50):
         (tmp_path / "mock_pi_counter").unlink(missing_ok=True)
         sleeps: list[float] = []
